@@ -370,8 +370,9 @@ type Text struct {
 	S        string  // the actual UTF-8 text
 }
 
-// A Rect represents a rectangle.
-type Rect struct {
+// (旧) A Rect represents a rectangle.
+// 元々Rect(四角形)オブジェクトだったものをLine(線)オブジェクトに変更
+type Line struct {
 	Min, Max Point
 }
 
@@ -381,10 +382,11 @@ type Point struct {
 	Y float64
 }
 
-// Content describes the basic content on a page: the text and any drawn rectangles.
+// (旧) Content describes the basic content on a page: the text and any drawn rectangles.
+// Content describes the basic content on a page: the text and any drawn lines.
 type Content struct {
 	Text []Text
-	Rect []Rect
+	Line []Line
 }
 
 type gstate struct {
@@ -435,8 +437,9 @@ func (p Page) Content() Content {
 		}
 	}
 
-	var rect []Rect
+	var line []Line
 	var gstack []gstate
+	var xLast, yLast float64
 	Interpret(strm, func(stk *Stack, op string) {
 		n := stk.Len()
 		args := make([]Value, n)
@@ -469,7 +472,17 @@ func (p Page) Content() Content {
 		case "f": // fill
 		case "g": // setgray
 		case "l": // lineto
+			if len(args) != 2 {
+				panic("bad l")
+			}
+			x, y := args[0].Float64(), args[1].Float64()
+			line = append(line, Line{Point{xLast, yLast}, Point{x, y}})
+			xLast, yLast = x, y
 		case "m": // moveto
+			if len(args) != 2 {
+				panic("bad m")
+			}
+			xLast, yLast = args[0].Float64(), args[1].Float64()
 
 		case "cs": // set colorspace non-stroking
 		case "scn": // set color non-stroking
@@ -479,7 +492,8 @@ func (p Page) Content() Content {
 				panic("bad re")
 			}
 			x, y, w, h := args[0].Float64(), args[1].Float64(), args[2].Float64(), args[3].Float64()
-			rect = append(rect, Rect{Point{x, y}, Point{x + w, y + h}})
+			lines := []Line{Line{Point{x, y}, Point{x + w, y}}, Line{Point{x, y}, Point{x, y + h}}, Line{Point{x + w, y}, Point{x + w, y + h}}, Line{Point{x, y + h}, Point{x + w, y + h}}}
+			line = append(line, lines...)
 
 		case "q": // save graphics state
 			gstack = append(gstack, g)
@@ -555,7 +569,8 @@ func (p Page) Content() Content {
 			if len(args) != 1 {
 				panic("bad Tj operator")
 			}
-			showText(args[0].RawString())
+			cID := fmt.Sprintf("%X", args[0].RawString())
+			showText(convertCIDtoUnicode(cID))
 
 		case "TJ": // show text, allowing individual glyph positioning
 			v := args[0]
@@ -612,7 +627,15 @@ func (p Page) Content() Content {
 			g.Th = args[0].Float64() / 100
 		}
 	})
-	return Content{text, rect}
+	return Content{text, line}
+}
+
+func convertCIDtoUnicode(str string) string {
+	fmt.Printf("%v\n", str)
+	for i := 0; i < len(str); i = i + 4 {
+		fmt.Printf("%v\n", str[i:i+4])
+	}
+	return str
 }
 
 // TextVertical implements sort.Interface for sorting
