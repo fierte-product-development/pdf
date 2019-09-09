@@ -144,7 +144,14 @@ func (f Font) Encoder() TextEncoding {
 			return &byteEncoder{&macRomanEncoding}
 		case "Identity-H":
 			// TODO: Should be big-endian UCS-2 decoder
-			return &nopEncoder{}
+			toUnicode := f.V.Key("ToUnicode")
+			if toUnicode.Kind() == Stream {
+				m := readCmap(toUnicode)
+				if m == nil {
+					return &nopEncoder{}
+				}
+				return m
+			}
 		default:
 			println("unknown encoding", enc.Name())
 			return &nopEncoder{}
@@ -294,7 +301,7 @@ func readCmap(toUnicode Value) *cmap {
 		case "findresource":
 			category := stk.Pop()
 			key := stk.Pop()
-			fmt.Println("findresource", key, category)
+			fmt.Sprintln("findresource", key, category)
 			stk.Push(newDict())
 		case "begincmap":
 			stk.Push(newDict())
@@ -332,7 +339,7 @@ func readCmap(toUnicode Value) *cmap {
 			category := stk.Pop().Name()
 			value := stk.Pop()
 			key := stk.Pop().Name()
-			fmt.Println("defineresource", key, value, category)
+			fmt.Sprintln("defineresource", key, value, category)
 			stk.Push(value)
 		default:
 			println("interp\t", op)
@@ -569,8 +576,7 @@ func (p Page) Content() Content {
 			if len(args) != 1 {
 				panic("bad Tj operator")
 			}
-			cID := fmt.Sprintf("%X", args[0].RawString())
-			showText(convertCIDtoUnicode(cID))
+			showText(args[0].RawString())
 
 		case "TJ": // show text, allowing individual glyph positioning
 			v := args[0]
@@ -628,14 +634,6 @@ func (p Page) Content() Content {
 		}
 	})
 	return Content{text, line}
-}
-
-func convertCIDtoUnicode(str string) string {
-	fmt.Printf("%v\n", str)
-	for i := 0; i < len(str); i = i + 4 {
-		fmt.Printf("%v\n", str[i:i+4])
-	}
-	return str
 }
 
 // TextVertical implements sort.Interface for sorting

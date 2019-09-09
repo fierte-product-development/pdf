@@ -18,19 +18,14 @@ type size struct {
 }
 
 func main() {
-	police := "ぴぴ"
-	strHogoNum := 1
-	fmt.Print(police, strHogoNum)
 	reader, err := pdf.Open("./test.pdf")
 	for i := 1; i <= reader.NumPage(); i++ {
 		page := reader.Page(i)
 		mb := page.V.Key("MediaBox")
 		pageSize := size{mb.Index(2).Float64(), mb.Index(3).Float64()}
 		contents := page.Content()
-		fonts := page.Font("F1").V.Key("ToUnicode")
 		fmt.Printf("%v\n", contents)
 		fmt.Printf("%v\n", pageSize)
-		fmt.Printf("%v\n", fonts)
 	}
 	fmt.Printf("%v\n", err)
 }
