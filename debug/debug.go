@@ -7,25 +7,41 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/rsc.io/pdf"
-)
-
-type size struct {
-	x float64
-	y float64
-}
+	/*
+		"fmt"
+		"github.com/gonum/plot"
+		"github.com/gonum/plot/plotter"
+		"github.com/gonum/plot/plotutil"
+		"github.com/gonum/plot/vg"
+	*/)
 
 func main() {
-	reader, err := pdf.Open("./test.pdf")
+	reader, _ := pdf.Open("./test.pdf")
 	for i := 1; i <= reader.NumPage(); i++ {
-		page := reader.Page(i)
-		mb := page.V.Key("MediaBox")
-		pageSize := size{mb.Index(2).Float64(), mb.Index(3).Float64()}
-		contents := page.Content()
-		fmt.Printf("%v\n", contents)
-		fmt.Printf("%v\n", pageSize)
+		/*
+			plt, _ := plot.New()
+			plt.Add(plotter.NewGrid())
+		*/
+		pg := reader.Page(i)
+		/*
+			mb := pg.V.Key("MediaBox")
+			plt.X.Min = mb.Index(0).Float64()
+			plt.Y.Min = mb.Index(1).Float64()
+			plt.X.Max = mb.Index(2).Float64()
+			plt.Y.Max = mb.Index(3).Float64()
+		*/
+		pg.Contents()
+		/*
+			for _, l := range contents.Body.Line {
+				min := plotter.XY{X: l.Min.X, Y: l.Min.Y}
+				max := plotter.XY{X: l.Max.X, Y: l.Max.Y}
+				plotutil.AddLinePoints(plt, "", plotter.XYs{min, max})
+			}
+			w := vg.Length(plt.X.Max/100) * vg.Inch
+			h := vg.Length(plt.Y.Max/100) * vg.Inch
+			fName := fmt.Sprintf("page%v.png", i)
+			plt.Save(w, h, fName)
+		*/
 	}
-	fmt.Printf("%v\n", err)
 }

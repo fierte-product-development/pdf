@@ -377,8 +377,7 @@ type Text struct {
 	S        string  // the actual UTF-8 text
 }
 
-// (旧) A Rect represents a rectangle.
-// 元々Rect(四角形)オブジェクトだったものをLine(線)オブジェクトに変更
+// A Line represents a line
 type Line struct {
 	Min, Max Point
 }
@@ -389,7 +388,13 @@ type Point struct {
 	Y float64
 }
 
-// (旧) Content describes the basic content on a page: the text and any drawn rectangles.
+// Contents contains the content in the page
+type Contents struct {
+	Header Content
+	Footer Content
+	Body   Content
+}
+
 // Content describes the basic content on a page: the text and any drawn lines.
 type Content struct {
 	Text []Text
@@ -411,9 +416,31 @@ type gstate struct {
 	CTM   matrix
 }
 
-// Content returns the page's content.
-func (p Page) Content() Content {
-	strm := p.V.Key("Contents")
+type lstate struct {
+	tp string
+	x  float64
+	y  float64
+}
+
+// Contents returns the page's content.
+func (p Page) Contents() Contents {
+	var contents Contents
+
+	val := p.V.Key("Contents")
+	switch val.Kind() {
+	case Array:
+		contents.Header = getContentFromStream(p, val.Index(0))
+		contents.Footer = getContentFromStream(p, val.Index(1))
+		contents.Body = getContentFromStream(p, val.Index(2))
+	case Stream:
+		contents.Body = getContentFromStream(p, val)
+	default:
+		println(val.Kind())
+	}
+	return contents
+}
+
+func getContentFromStream(p Page, strm Value) Content {
 	var enc TextEncoding = &nopEncoder{}
 
 	var g = gstate{
@@ -445,8 +472,8 @@ func (p Page) Content() Content {
 	}
 
 	var line []Line
+	var lstack []lstate
 	var gstack []gstate
-	var xLast, yLast float64
 	Interpret(strm, func(stk *Stack, op string) {
 		n := stk.Len()
 		args := make([]Value, n)
@@ -482,14 +509,12 @@ func (p Page) Content() Content {
 			if len(args) != 2 {
 				panic("bad l")
 			}
-			x, y := args[0].Float64(), args[1].Float64()
-			line = append(line, Line{Point{xLast, yLast}, Point{x, y}})
-			xLast, yLast = x, y
+			lstack = append([]lstate{{"l", args[0].Float64(), args[1].Float64()}}, lstack...)
 		case "m": // moveto
 			if len(args) != 2 {
 				panic("bad m")
 			}
-			xLast, yLast = args[0].Float64(), args[1].Float64()
+			lstack = append([]lstate{{"m", args[0].Float64(), args[1].Float64()}}, lstack...)
 
 		case "cs": // set colorspace non-stroking
 		case "scn": // set color non-stroking
@@ -499,7 +524,12 @@ func (p Page) Content() Content {
 				panic("bad re")
 			}
 			x, y, w, h := args[0].Float64(), args[1].Float64(), args[2].Float64(), args[3].Float64()
-			lines := []Line{Line{Point{x, y}, Point{x + w, y}}, Line{Point{x, y}, Point{x, y + h}}, Line{Point{x + w, y}, Point{x + w, y + h}}, Line{Point{x, y + h}, Point{x + w, y + h}}}
+			lines := []Line{
+				{Point{x, y}, Point{x + w, y}},
+				{Point{x, y}, Point{x, y + h}},
+				{Point{x + w, y}, Point{x + w, y + h}},
+				{Point{x, y + h}, Point{x + w, y + h}},
+			}
 			line = append(line, lines...)
 
 		case "q": // save graphics state
@@ -633,6 +663,23 @@ func (p Page) Content() Content {
 			g.Th = args[0].Float64() / 100
 		}
 	})
+
+	//lineスタックからlineオブジェクトを生成
+	var pbuf []Point
+	for _, l := range lstack {
+		p := Point{l.x, l.y}
+		if len(pbuf) > 0 {
+			line = append(line, Line{pbuf[1], p})
+			pbuf[1] = p
+			if l.tp == "m" {
+				line = append(line, Line{p, pbuf[0]})
+				pbuf = make([]Point, 0)
+			}
+		} else {
+			pbuf = []Point{p, p}
+		}
+	}
+
 	return Content{text, line}
 }
 
