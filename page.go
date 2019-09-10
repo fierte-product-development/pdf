@@ -6,6 +6,7 @@ package pdf
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -379,7 +380,40 @@ type Text struct {
 
 // A Line represents a line
 type Line struct {
-	Min, Max Point
+	Type   string
+	Fix    float64
+	VarMin float64
+	VarMax float64
+}
+
+func newLine(pt [2]Point) *Line {
+	l := new(Line)
+	if pt[0].X == pt[1].X {
+		l.Type = "V"
+		l.Fix = pt[0].X
+		l.VarMin = math.Min(pt[0].Y, pt[1].Y)
+		l.VarMax = math.Max(pt[0].Y, pt[1].Y)
+	} else if pt[0].Y == pt[1].Y {
+		l.Type = "H"
+		l.Fix = pt[0].Y
+		l.VarMin = math.Min(pt[0].X, pt[1].X)
+		l.VarMax = math.Max(pt[0].X, pt[1].X)
+	} else {
+		panic("bad point")
+	}
+	return l
+}
+
+// ToXY converts line to two points
+func (l *Line) ToXY() [2]Point {
+	var pt [2]Point
+	switch l.Type {
+	case "V":
+		pt[0], pt[1] = Point{l.Fix, l.VarMax}, Point{l.Fix, l.VarMin}
+	case "H":
+		pt[0], pt[1] = Point{l.VarMin, l.Fix}, Point{l.VarMax, l.Fix}
+	}
+	return pt
 }
 
 // A Point represents an X, Y pair.
@@ -525,10 +559,10 @@ func getContentFromStream(p Page, strm Value) Content {
 			}
 			x, y, w, h := args[0].Float64(), args[1].Float64(), args[2].Float64(), args[3].Float64()
 			lines := []Line{
-				{Point{x, y}, Point{x + w, y}},
-				{Point{x, y}, Point{x, y + h}},
-				{Point{x + w, y}, Point{x + w, y + h}},
-				{Point{x, y + h}, Point{x + w, y + h}},
+				*newLine([2]Point{{x, y}, {x + w, y}}),
+				*newLine([2]Point{{x, y}, {x, y + h}}),
+				*newLine([2]Point{{x + w, y}, {x + w, y + h}}),
+				*newLine([2]Point{{x, y + h}, {x + w, y + h}}),
 			}
 			line = append(line, lines...)
 
@@ -670,10 +704,10 @@ func getContentFromStream(p Page, strm Value) Content {
 	for i := len(lstack) - 1; i >= 0; i-- {
 		pt := Point{lstack[i].x, lstack[i].y}
 		if hasBuf {
-			line = append(line, Line{ptBuf[1], pt})
+			line = append(line, *newLine([2]Point{ptBuf[1], pt}))
 			ptBuf[1] = pt
 			if lstack[i].tp == "m" {
-				line = append(line, Line{pt, ptBuf[0]})
+				line = append(line, *newLine([2]Point{pt, ptBuf[0]}))
 				hasBuf = false
 			}
 		} else {

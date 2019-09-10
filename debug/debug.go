@@ -29,8 +29,9 @@ func main() {
 		plt.Y.Max = mb.Index(3).Float64()
 		contents := pg.Contents()
 		for _, l := range contents.Body.Line {
-			min := plotter.XY{X: l.Min.X, Y: l.Min.Y}
-			max := plotter.XY{X: l.Max.X, Y: l.Max.Y}
+			xy := l.ToXY()
+			min := plotter.XY{X: xy[0].X, Y: xy[0].Y}
+			max := plotter.XY{X: xy[1].X, Y: xy[1].Y}
 			plotutil.AddLinePoints(plt, "", plotter.XYs{min, max})
 		}
 		w := vg.Length(plt.X.Max/100) * vg.Inch
