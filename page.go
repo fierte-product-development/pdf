@@ -509,12 +509,12 @@ func getContentFromStream(p Page, strm Value) Content {
 			if len(args) != 2 {
 				panic("bad l")
 			}
-			lstack = append([]lstate{{"l", args[0].Float64(), args[1].Float64()}}, lstack...)
+			lstack = append(lstack, lstate{"l", args[0].Float64(), args[1].Float64()})
 		case "m": // moveto
 			if len(args) != 2 {
 				panic("bad m")
 			}
-			lstack = append([]lstate{{"m", args[0].Float64(), args[1].Float64()}}, lstack...)
+			lstack = append(lstack, lstate{"m", args[0].Float64(), args[1].Float64()})
 
 		case "cs": // set colorspace non-stroking
 		case "scn": // set color non-stroking
@@ -665,18 +665,20 @@ func getContentFromStream(p Page, strm Value) Content {
 	})
 
 	//lineスタックからlineオブジェクトを生成
-	var pbuf []Point
-	for _, l := range lstack {
-		p := Point{l.x, l.y}
-		if len(pbuf) > 0 {
-			line = append(line, Line{pbuf[1], p})
-			pbuf[1] = p
-			if l.tp == "m" {
-				line = append(line, Line{p, pbuf[0]})
-				pbuf = make([]Point, 0)
+	var ptBuf [2]Point
+	hasBuf := false
+	for i := len(lstack) - 1; i >= 0; i-- {
+		pt := Point{lstack[i].x, lstack[i].y}
+		if hasBuf {
+			line = append(line, Line{ptBuf[1], pt})
+			ptBuf[1] = pt
+			if lstack[i].tp == "m" {
+				line = append(line, Line{pt, ptBuf[0]})
+				hasBuf = false
 			}
 		} else {
-			pbuf = []Point{p, p}
+			ptBuf[0], ptBuf[1] = pt, pt
+			hasBuf = true
 		}
 	}
 
