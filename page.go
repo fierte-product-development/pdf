@@ -7,6 +7,7 @@ package pdf
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 )
 
@@ -386,24 +387,6 @@ type Line struct {
 	VarMax float64
 }
 
-func newLine(pt [2]Point) *Line {
-	l := new(Line)
-	if pt[0].X == pt[1].X {
-		l.Type = "V"
-		l.Fix = pt[0].X
-		l.VarMin = math.Min(pt[0].Y, pt[1].Y)
-		l.VarMax = math.Max(pt[0].Y, pt[1].Y)
-	} else if pt[0].Y == pt[1].Y {
-		l.Type = "H"
-		l.Fix = pt[0].Y
-		l.VarMin = math.Min(pt[0].X, pt[1].X)
-		l.VarMax = math.Max(pt[0].X, pt[1].X)
-	} else {
-		panic("bad point")
-	}
-	return l
-}
-
 // ToXY converts line to two points
 func (l *Line) ToXY() [2]Point {
 	var pt [2]Point
@@ -506,6 +489,27 @@ func getContentFromStream(p Page, strm Value) Content {
 		}
 	}
 
+	var vLine []Line
+	var hLine []Line
+	newLine := func(pt [2]Point) {
+		l := Line{}
+		if pt[0].X == pt[1].X {
+			l.Type = "V"
+			l.Fix = pt[0].X
+			l.VarMin = math.Min(pt[0].Y, pt[1].Y)
+			l.VarMax = math.Max(pt[0].Y, pt[1].Y)
+			vLine = append(vLine, l)
+		} else if pt[0].Y == pt[1].Y {
+			l.Type = "H"
+			l.Fix = pt[0].Y
+			l.VarMin = math.Min(pt[0].X, pt[1].X)
+			l.VarMax = math.Max(pt[0].X, pt[1].X)
+			hLine = append(hLine, l)
+		} else {
+			panic("bad point")
+		}
+	}
+
 	var line []Line
 	var lstack []lstate
 	var gstack []gstate
@@ -559,13 +563,10 @@ func getContentFromStream(p Page, strm Value) Content {
 				panic("bad re")
 			}
 			x, y, w, h := args[0].Float64(), args[1].Float64(), args[2].Float64(), args[3].Float64()
-			lines := []Line{
-				*newLine([2]Point{{x, y}, {x + w, y}}),
-				*newLine([2]Point{{x, y}, {x, y + h}}),
-				*newLine([2]Point{{x + w, y}, {x + w, y + h}}),
-				*newLine([2]Point{{x, y + h}, {x + w, y + h}}),
-			}
-			line = append(line, lines...)
+			newLine([2]Point{{x, y}, {x + w, y}})
+			newLine([2]Point{{x, y}, {x, y + h}})
+			newLine([2]Point{{x + w, y}, {x + w, y + h}})
+			newLine([2]Point{{x, y + h}, {x + w, y + h}})
 
 		case "q": // save graphics state
 			gstack = append(gstack, g)
@@ -710,10 +711,10 @@ func getContentFromStream(p Page, strm Value) Content {
 	for i := len(lstack) - 1; i >= 0; i-- {
 		pt := Point{lstack[i].x, lstack[i].y}
 		if hasBuf {
-			line = append(line, *newLine([2]Point{ptBuf[1], pt}))
+			newLine([2]Point{ptBuf[1], pt})
 			ptBuf[1] = pt
 			if lstack[i].tp == "m" {
-				line = append(line, *newLine([2]Point{pt, ptBuf[0]}))
+				newLine([2]Point{pt, ptBuf[0]})
 				hasBuf = false
 			}
 		} else {
@@ -722,6 +723,79 @@ func getContentFromStream(p Page, strm Value) Content {
 		}
 	}
 
+	/*
+		nearlyEqual := func(x, y float64) bool {
+			return x+0.1 > y && x-0.1 < y
+		}
+	*/
+	isSeperated := func(x, y float64) bool {
+		return x+0.1 < y
+	}
+
+	// lineオブジェクトを合成
+	mergeLine := func(line []Line) []Line {
+		//ソート後fitの誤差を吸収して再びソート
+		sort.Slice(line, func(i, j int) bool {
+			return line[i].Fix < line[j].Fix
+		})
+		for i := 1; i < len(line); i++ {
+			if !isSeperated(line[i-1].Fix, line[i].Fix) {
+				line[i].Fix = line[i-1].Fix
+			}
+		}
+		sort.Slice(line, func(i, j int) bool {
+			var ok bool
+			p, q := line[i], line[j]
+			if p.Fix == q.Fix {
+				if p.VarMin == q.VarMin {
+					ok = p.VarMax < q.VarMax
+				} else {
+					ok = p.VarMin < q.VarMin
+				}
+			} else {
+				ok = p.Fix < q.Fix
+			}
+			return ok
+		})
+		// マージ
+		var mLine []Line
+		var tp string
+		var fix, vmin, vmax float64
+		for i, l := range line {
+			if i == 0 {
+				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
+			}
+			if isSeperated(vmax, l.VarMin) || fix != l.Fix {
+				mLine = append(mLine, Line{tp, fix, vmin, vmax})
+				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
+			} else {
+				vmax = math.Max(vmax, l.VarMax)
+			}
+			if i == len(line)-1 {
+				mLine = append(mLine, Line{tp, fix, vmin, vmax})
+			}
+		}
+		return mLine
+	}
+	hLine = mergeLine(hLine)
+	vLine = mergeLine(vLine)
+
+	sort.Slice(vLine, func(i, j int) bool {
+		var ok bool
+		p, q := vLine[i], vLine[j]
+		if p.Fix == q.Fix {
+			if p.VarMax == q.VarMax {
+				ok = p.VarMin > q.VarMin
+			} else {
+				ok = p.VarMax > q.VarMax
+			}
+		} else {
+			ok = p.Fix < q.Fix
+		}
+		return ok
+	})
+
+	line = append(vLine, hLine...)
 	return Content{text, line}
 }
 
