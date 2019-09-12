@@ -476,6 +476,7 @@ func (p Page) Contents() Contents {
 
 func getContentFromStream(p Page, strm Value) Content {
 	var enc TextEncoding = &nopEncoder{}
+	encDict := map[string]TextEncoding{}
 
 	var g = gstate{
 		Th:  1,
@@ -613,7 +614,12 @@ func getContentFromStream(p Page, strm Value) Content {
 			}
 			f := args[0].Name()
 			g.Tf = p.Font(f)
-			enc = g.Tf.Encoder()
+			if v, ok := encDict[f]; ok {
+				enc = v
+			} else {
+				enc = g.Tf.Encoder()
+				encDict[f] = enc
+			}
 			if enc == nil {
 				println("no cmap for", f)
 				enc = &nopEncoder{}
