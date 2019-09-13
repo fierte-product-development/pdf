@@ -18,6 +18,15 @@ import (
 
 func main() {
 	reader, _ := pdf.Open("./test.pdf")
+	draw := func(plt *plot.Plot, points [4]float64, color int, dashes int) {
+		min := plotter.XY{X: points[0], Y: points[2]}
+		max := plotter.XY{X: points[1], Y: points[3]}
+		l, s, _ := plotter.NewLinePoints(plotter.XYs{min, max})
+		l.Color = plotutil.Color(color)
+		l.Dashes = plotutil.Dashes(dashes)
+		s.Color = plotutil.Color(color)
+		plt.Add(l, s)
+	}
 	for i := 1; i <= reader.NumPage(); i++ {
 		plt, _ := plot.New()
 		plt.Add(plotter.NewGrid())
@@ -28,11 +37,17 @@ func main() {
 		plt.X.Max = mb.Index(2).Float64()
 		plt.Y.Max = mb.Index(3).Float64()
 		contents := pg.Contents()
+		for _, t := range contents.Body.Table {
+			for _, c := range t.Cell {
+				draw(plt, [4]float64{c.Min.X, c.Max.X, c.Max.Y, c.Max.Y}, 0, 0)
+				draw(plt, [4]float64{c.Max.X, c.Max.X, c.Min.Y, c.Max.Y}, 0, 0)
+				draw(plt, [4]float64{c.Min.X, c.Max.X, c.Min.Y, c.Min.Y}, 0, 0)
+				draw(plt, [4]float64{c.Min.X, c.Min.X, c.Min.Y, c.Max.Y}, 0, 0)
+			}
+		}
 		for _, l := range contents.Body.Line {
 			xy := l.ToXY()
-			min := plotter.XY{X: xy[0].X, Y: xy[0].Y}
-			max := plotter.XY{X: xy[1].X, Y: xy[1].Y}
-			plotutil.AddLinePoints(plt, "", plotter.XYs{min, max})
+			draw(plt, [4]float64{xy[0].X, xy[1].X, xy[0].Y, xy[1].Y}, 2, 2)
 		}
 		w := vg.Length(plt.X.Max/100) * vg.Inch
 		h := vg.Length(plt.Y.Max/100) * vg.Inch
