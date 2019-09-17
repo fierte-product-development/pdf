@@ -7,7 +7,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
 
 	"github.com/rsc.io/pdf"
 	"gonum.org/v1/plot"
@@ -16,17 +19,20 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
+func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
+	min := plotter.XY{X: points[0], Y: points[2]}
+	max := plotter.XY{X: points[1], Y: points[3]}
+	l, s, _ := plotter.NewLinePoints(plotter.XYs{min, max})
+	l.Color = plotutil.Color(color)
+	l.Dashes = plotutil.Dashes(dashes)
+	s.Color = plotutil.Color(color)
+	plt.Add(l, s)
+}
+
 func main() {
 	reader, _ := pdf.Open("./test.pdf")
-	draw := func(plt *plot.Plot, points [4]float64, color int, dashes int) {
-		min := plotter.XY{X: points[0], Y: points[2]}
-		max := plotter.XY{X: points[1], Y: points[3]}
-		l, s, _ := plotter.NewLinePoints(plotter.XYs{min, max})
-		l.Color = plotutil.Color(color)
-		l.Dashes = plotutil.Dashes(dashes)
-		s.Color = plotutil.Color(color)
-		plt.Add(l, s)
-	}
+	var doc []pdf.Contents
+	var docs [][]pdf.Contents
 	for i := 1; i <= reader.NumPage(); i++ {
 		plt, _ := plot.New()
 		plt.Add(plotter.NewGrid())
@@ -53,5 +59,9 @@ func main() {
 		h := vg.Length(plt.Y.Max/100) * vg.Inch
 		fName := fmt.Sprintf("page%v.png", i)
 		plt.Save(w, h, fName)
+		doc = append(doc, contents)
 	}
+	docs = append(docs, doc)
+	js, _ := json.MarshalIndent(docs, "", "  ")
+	ioutil.WriteFile("docs.json", js, os.ModePerm)
 }
