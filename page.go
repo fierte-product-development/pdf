@@ -394,6 +394,15 @@ type Line struct {
 	VarMax float64
 }
 
+func newLine() *Line {
+	l := new(Line)
+	l.Type = "nil"
+	l.Fix = -1
+	l.VarMin = -1
+	l.VarMax = -1
+	return l
+}
+
 // ToXY converts line to two points
 func (l *Line) ToXY() [2]Point {
 	var pt [2]Point
@@ -446,7 +455,7 @@ func newTable(vhl vhLine) *Table {
 		vLeft := vCrossAtTop[0]
 		vCrossAtTop = vCrossAtTop[1:]
 		for _, vRight := range vCrossAtTop {
-			var hBottom Line
+			hBottom := *newLine()
 			for _, hl := range vhl.hLine {
 				if hTop.Fix > hl.Fix &&
 					crosses(hl, vLeft) &&
@@ -455,11 +464,13 @@ func newTable(vhl vhLine) *Table {
 					break
 				}
 			}
-			t.Cell = append(t.Cell, Cell{
-				Min: Point{vLeft.Fix, hBottom.Fix},
-				Max: Point{vRight.Fix, hTop.Fix},
-			})
-			vLeft = vRight
+			if hBottom.Type != "nil" {
+				t.Cell = append(t.Cell, Cell{
+					Min: Point{vLeft.Fix, hBottom.Fix},
+					Max: Point{vRight.Fix, hTop.Fix},
+				})
+				vLeft = vRight
+			}
 		}
 		if i == len(vhl.hLine)-2 {
 			break
@@ -563,7 +574,7 @@ func getContentFromStream(p Page, strm Value) Content {
 
 	var vLine []Line
 	var hLine []Line
-	newLine := func(pt [2]Point) {
+	makeLine := func(pt [2]Point) {
 		l := Line{}
 		if pt[0].X == pt[1].X {
 			l.Type = "V"
@@ -635,10 +646,10 @@ func getContentFromStream(p Page, strm Value) Content {
 				panic("bad re")
 			}
 			x, y, w, h := args[0].Float64(), args[1].Float64(), args[2].Float64(), args[3].Float64()
-			newLine([2]Point{{x, y}, {x + w, y}})
-			newLine([2]Point{{x, y}, {x, y + h}})
-			newLine([2]Point{{x + w, y}, {x + w, y + h}})
-			newLine([2]Point{{x, y + h}, {x + w, y + h}})
+			makeLine([2]Point{{x, y}, {x + w, y}})
+			makeLine([2]Point{{x, y}, {x, y + h}})
+			makeLine([2]Point{{x + w, y}, {x + w, y + h}})
+			makeLine([2]Point{{x, y + h}, {x + w, y + h}})
 
 		case "q": // save graphics state
 			gstack = append(gstack, g)
@@ -783,10 +794,10 @@ func getContentFromStream(p Page, strm Value) Content {
 	for i := len(lqueue) - 1; i >= 0; i-- {
 		pt := Point{lqueue[i].x, lqueue[i].y}
 		if hasBuf {
-			newLine([2]Point{ptBuf[1], pt})
+			makeLine([2]Point{ptBuf[1], pt})
 			ptBuf[1] = pt
 			if lqueue[i].tp == "m" {
-				newLine([2]Point{pt, ptBuf[0]})
+				makeLine([2]Point{pt, ptBuf[0]})
 				hasBuf = false
 			}
 		} else {
@@ -854,12 +865,12 @@ func getContentFromStream(p Page, strm Value) Content {
 
 	// 線をテーブルごとに振り分け
 	// TODO 振り分けのロジックを表が横並びの場合にも対応させる必要があるかも
-	hLine = append(hLine, Line{Type: "Dummy"})
-	vLine = append(vLine, Line{Type: "Dummy"})
+	hLine = append(hLine, *newLine())
+	vLine = append(vLine, *newLine())
 	var vhls []vhLine
 	vc, hc := 0, 0
 	for hc < len(hLine)-1 {
-		if !nearlyEqual(vLine[vc].Fix, hLine[hc].VarMin) {
+		if !nearlyEqual(hLine[hc].Fix, vLine[vc].VarMax) {
 			line = append(line, hLine[hc])
 			hc++
 		} else {
@@ -875,6 +886,19 @@ func getContentFromStream(p Page, strm Value) Content {
 			}
 			vhls = append(vhls, vhl)
 		}
+	}
+
+	// テーブルの縦線はxが低くyが高い順にソート
+	for _, vhl := range vhls {
+		sort.Slice(vhl.vLine, func(i, j int) bool {
+			p, q, ok := vhl.vLine[i], vhl.vLine[j], false
+			if p.Fix == q.Fix {
+				ok = p.VarMax > q.VarMax
+			} else {
+				ok = p.Fix < q.Fix
+			}
+			return ok
+		})
 	}
 
 	var table []Table
