@@ -58,7 +58,7 @@ func (r *Reader) NumPage() int {
 	return int(r.Trailer().Key("Root").Key("Pages").Key("Count").Int64())
 }
 
-func (p Page) findInherited(key string) Value {
+func (p *Page) findInherited(key string) Value {
 	for v := p.V; !v.IsNull(); v = v.Key("Parent") {
 		if r := v.Key(key); !r.IsNull() {
 			return r
@@ -68,27 +68,27 @@ func (p Page) findInherited(key string) Value {
 }
 
 /*
-func (p Page) MediaBox() Value {
+func (p *Page) MediaBox() Value {
 	return p.findInherited("MediaBox")
 }
 
-func (p Page) CropBox() Value {
+func (p *Page) CropBox() Value {
 	return p.findInherited("CropBox")
 }
 */
 
 // Resources returns the resources dictionary associated with the page.
-func (p Page) Resources() Value {
+func (p *Page) Resources() Value {
 	return p.findInherited("Resources")
 }
 
 // Fonts returns a list of the fonts associated with the page.
-func (p Page) Fonts() []string {
+func (p *Page) Fonts() []string {
 	return p.Resources().Key("Font").Keys()
 }
 
 // Font returns the font with the given name associated with the page.
-func (p Page) Font(name string) Font {
+func (p *Page) Font(name string) Font {
 	return Font{p.Resources().Key("Font").Key(name)}
 }
 
@@ -523,7 +523,7 @@ type lstate struct {
 }
 
 // Contents returns the page's content.
-func (p Page) Contents() Contents {
+func (p *Page) Contents() Contents {
 	var contents Contents
 
 	val := p.V.Key("Contents")
@@ -540,7 +540,7 @@ func (p Page) Contents() Contents {
 	return contents
 }
 
-func getContentFromStream(p Page, strm Value) Content {
+func getContentFromStream(p *Page, strm Value) Content {
 	var enc TextEncoding = &nopEncoder{}
 	encDict := map[string]TextEncoding{}
 
