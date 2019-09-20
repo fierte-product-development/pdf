@@ -29,7 +29,7 @@ func parsePdf(fileName string, fileIdx int, log bool) []pdf.Contents {
 	var wg sync.WaitGroup
 	for i := 1; i <= np; i++ {
 		wg.Add(1)
-		go func(i int) {
+		func(i int) { //go
 			pg := r.Page(i)
 			cont := pg.Contents()
 			if log {
@@ -88,16 +88,26 @@ func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
 
 func main() {
 	log := true
-	var fileNames []string
-	for i := 1; i <= 1; i++ {
-		fileNames = append(fileNames, fmt.Sprintf("test_%v", i))
+	fileNames := []string{
+		"こすも",
+		//"AVANT短信",
+		/*
+			"COSMO報告書",
+			"COSMO短信",
+			"ID報告書",
+			"ID短信",
+			"MEC報告書",
+			"MEC短信",
+			"Wacom報告書",
+			"Wacom短信",
+		*/
 	}
 	sTime := time.Now()
 	docs := make([][]pdf.Contents, len(fileNames))
 	var wg sync.WaitGroup
 	for i, fn := range fileNames {
 		wg.Add(1)
-		go func(fn string, i int) {
+		func(fn string, i int) { //go
 			docs[i] = parsePdf(fn, i, log)
 			wg.Done()
 		}(fn, i)

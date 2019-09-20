@@ -144,19 +144,22 @@ func (f Font) Encoder() TextEncoding {
 			return &byteEncoder{&winAnsiEncoding}
 		case "MacRomanEncoding":
 			return &byteEncoder{&macRomanEncoding}
-		case "Identity-H":
-			// TODO: Should be big-endian UCS-2 decoder
+		// case "Identity-H":
+		// TODO: Should be big-endian UCS-2 decoder
+		default:
 			toUnicode := f.V.Key("ToUnicode")
-			if toUnicode.Kind() == Stream {
-				m := readCmap(toUnicode)
-				if m == nil {
+			switch toUnicode.Kind() {
+			case Stream, Dict:
+				cm := readCmap(toUnicode)
+				if cm == nil {
+					println("nil cmap", enc.Name())
 					return &nopEncoder{}
 				}
-				return m
+				return cm
+			default:
+				println("unknown encoding", enc.Name())
+				return &nopEncoder{}
 			}
-		default:
-			println("unknown encoding", enc.Name())
-			return &nopEncoder{}
 		}
 	case Dict:
 		return &dictEncoder{enc.Key("Differences")}
@@ -165,15 +168,6 @@ func (f Font) Encoder() TextEncoding {
 	default:
 		println("unexpected encoding", enc.String())
 		return &nopEncoder{}
-	}
-
-	toUnicode := f.V.Key("ToUnicode")
-	if toUnicode.Kind() == Dict {
-		m := readCmap(toUnicode)
-		if m == nil {
-			return &nopEncoder{}
-		}
-		return m
 	}
 
 	return &byteEncoder{&pdfDocEncoding}
@@ -335,6 +329,17 @@ func readCmap(toUnicode Value) *cmap {
 			}
 			for i := 0; i < n; i++ {
 				dst, srcHi, srcLo := stk.Pop(), stk.Pop().RawString(), stk.Pop().RawString()
+				m.bfrange = append(m.bfrange, bfrange{srcLo, srcHi, dst})
+			}
+		case "beginbfchar":
+			n = int(stk.Pop().Int64())
+		case "endbfchar":
+			if n < 0 {
+				panic("missing beginbfchar")
+			}
+			for i := 0; i < n; i++ {
+				dst, srcHi := stk.Pop(), stk.Pop().RawString()
+				srcLo := srcHi
 				m.bfrange = append(m.bfrange, bfrange{srcLo, srcHi, dst})
 			}
 		case "defineresource":
@@ -501,6 +506,10 @@ type Content struct {
 	Line  []Line
 }
 
+func (c *Content) len() int {
+	return len(c.Line) + len(c.Table) + len(c.Line)
+}
+
 type gstate struct {
 	Tc    float64
 	Tw    float64
@@ -529,9 +538,19 @@ func (p *Page) Contents() Contents {
 	val := p.V.Key("Contents")
 	switch val.Kind() {
 	case Array:
-		contents.Header = getContentFromStream(p, val.Index(0))
-		contents.Footer = getContentFromStream(p, val.Index(1))
-		contents.Body = getContentFromStream(p, val.Index(2))
+		for i := 0; i < val.Len(); i++ {
+			cont := getContentFromStream(p, val.Index(i))
+			if cont.len() > 0 {
+				switch i {
+				case 0:
+					contents.Header = cont
+				case 1:
+					contents.Footer = cont
+				case 2:
+					contents.Body = cont
+				}
+			}
+		}
 	case Stream:
 		contents.Body = getContentFromStream(p, val)
 	default:
@@ -589,7 +608,7 @@ func getContentFromStream(p *Page, strm Value) Content {
 			l.VarMax = math.Max(pt[0].X, pt[1].X)
 			hLine = append(hLine, l)
 		} else {
-			panic("bad point")
+			println("not V or H %v", fmt.Sprintf("%v", pt))
 		}
 	}
 
@@ -619,11 +638,13 @@ func getContentFromStream(p *Page, strm Value) Content {
 			g.CTM = m.mul(g.CTM)
 
 		case "gs": // set parameters from graphics state resource
-			gs := p.Resources().Key("ExtGState").Key(args[0].Name())
-			font := gs.Key("Font")
-			if font.Kind() == Array && font.Len() == 2 {
-				//fmt.Println("FONT", font)
-			}
+			/*
+				gs := p.Resources().Key("ExtGState").Key(args[0].Name())
+				font := gs.Key("Font")
+				if font.Kind() == Array && font.Len() == 2 {
+					//fmt.Println("FONT", font)
+				}
+			*/
 
 		case "f": // fill
 		case "g": // setgray
@@ -646,18 +667,22 @@ func getContentFromStream(p *Page, strm Value) Content {
 				panic("bad re")
 			}
 			x, y, w, h := args[0].Float64(), args[1].Float64(), args[2].Float64(), args[3].Float64()
-			makeLine([2]Point{{x, y}, {x + w, y}})
-			makeLine([2]Point{{x, y}, {x, y + h}})
-			makeLine([2]Point{{x + w, y}, {x + w, y + h}})
-			makeLine([2]Point{{x, y + h}, {x + w, y + h}})
+			if w < 500 && h < 750 { //でかくて見えない箱が時々ある
+				makeLine([2]Point{{x, y}, {x + w, y}})
+				makeLine([2]Point{{x, y}, {x, y + h}})
+				makeLine([2]Point{{x + w, y}, {x + w, y + h}})
+				makeLine([2]Point{{x, y + h}, {x + w, y + h}})
+			}
 
 		case "q": // save graphics state
 			gstack = append(gstack, g)
 
 		case "Q": // restore graphics state
 			n := len(gstack) - 1
-			g = gstack[n]
-			gstack = gstack[:n]
+			if n > -1 {
+				g = gstack[n]
+				gstack = gstack[:n]
+			}
 
 		case "BT": // begin text (reset text matrix and line matrix)
 			g.Tm = ident
@@ -787,6 +812,10 @@ func getContentFromStream(p *Page, strm Value) Content {
 			g.Th = args[0].Float64() / 100
 		}
 	})
+
+	for _, l := range lqueue{
+		fmt.Printf("%v\n", l)
+	}
 
 	//lineキューからlineオブジェクトを生成
 	var ptBuf [2]Point
@@ -941,8 +970,8 @@ func getContentFromStream(p *Page, strm Value) Content {
 		}
 	}
 
-	// table = []Table{}
-	// line = append(hLine, vLine...)
+	table = []Table{}
+	line = append(hLine, vLine...)
 	return Content{text, table, line}
 }
 
