@@ -21,28 +21,36 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePdf(fileName string, index int, log bool) []pdf.Contents {
-	reader, _ := pdf.Open(fmt.Sprintf("./%v.pdf", fileName))
-	var doc []pdf.Contents
-	for i := 1; i <= reader.NumPage(); i++ {
-		pg := reader.Page(i)
-		cont := pg.Contents()
-		mb := pg.V.Key("MediaBox")
-		if log {
-			saveLinePng(&mb, &cont, fileName, i)
-		}
-		doc = append(doc, cont)
+func parsePdf(fileName string, fileIdx int, log bool) []pdf.Contents {
+	fileName = fmt.Sprintf("./%v.pdf", fileName)
+	r, _ := pdf.Open(fileName)
+	np := r.NumPage()
+	doc := make([]pdf.Contents, np)
+	var wg sync.WaitGroup
+	for i := 1; i <= np; i++ {
+		wg.Add(1)
+		go func(i int) {
+			pg := r.Page(i)
+			cont := pg.Contents()
+			if log {
+				mb := pg.V.Key("MediaBox")
+				saveLinePng(&cont, &mb, fileIdx, i)
+			}
+			doc[i-1] = cont
+			wg.Done()
+		}(i)
 	}
+	wg.Wait()
 	return doc
 }
 
-func saveLinePng(mb *pdf.Value, cont *pdf.Contents, name string, index int) {
+func saveLinePng(cont *pdf.Contents, mbox *pdf.Value, fileIdx int, pageIdx int) {
 	plt, _ := plot.New()
 	plt.Add(plotter.NewGrid())
-	plt.X.Min = mb.Index(0).Float64()
-	plt.Y.Min = mb.Index(1).Float64()
-	plt.X.Max = mb.Index(2).Float64()
-	plt.Y.Max = mb.Index(3).Float64()
+	plt.X.Min = mbox.Index(0).Float64()
+	plt.Y.Min = mbox.Index(1).Float64()
+	plt.X.Max = mbox.Index(2).Float64()
+	plt.Y.Max = mbox.Index(3).Float64()
 	parts := [3]*pdf.Content{
 		&cont.Header,
 		&cont.Footer,
@@ -64,7 +72,7 @@ func saveLinePng(mb *pdf.Value, cont *pdf.Contents, name string, index int) {
 	}
 	w := vg.Length(plt.X.Max/100) * vg.Inch
 	h := vg.Length(plt.Y.Max/100) * vg.Inch
-	pngName := fmt.Sprintf("%v_page_%v.png", name, index)
+	pngName := fmt.Sprintf("file%v_page%v.png", fileIdx+1, pageIdx)
 	plt.Save(w, h, pngName)
 }
 
@@ -79,18 +87,18 @@ func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
 }
 
 func main() {
-	log := false
+	log := true
 	var fileNames []string
-	for i := 1; i <= 10; i++ {
+	for i := 1; i <= 1; i++ {
 		fileNames = append(fileNames, fmt.Sprintf("test_%v", i))
 	}
 	sTime := time.Now()
-	var wg sync.WaitGroup
 	docs := make([][]pdf.Contents, len(fileNames))
+	var wg sync.WaitGroup
 	for i, fn := range fileNames {
 		wg.Add(1)
-		go func(fileName string, index int) {
-			docs[index] = parsePdf(fileName, index, log)
+		go func(fn string, i int) {
+			docs[i] = parsePdf(fn, i, log)
 			wg.Done()
 		}(fn, i)
 	}
