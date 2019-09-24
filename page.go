@@ -511,6 +511,8 @@ func (c *Content) len() int {
 }
 
 type gstate struct {
+	cs    bool
+	CS    bool
 	Tc    float64
 	Tw    float64
 	Th    float64
@@ -560,14 +562,17 @@ func (p *Page) Contents() Contents {
 }
 
 func getContentFromStream(p *Page, strm Value) Content {
-	var enc TextEncoding = &nopEncoder{}
-	encDict := map[string]TextEncoding{}
-
+	// 現在のグラフィックステート
 	var g = gstate{
+		CS:  true,
+		cs:  true,
 		Th:  1,
 		CTM: ident,
 	}
+	// qオペレータなどでグラフィックステートを一時保存するためのスタック
+	var gstack []gstate
 
+	var enc TextEncoding = &nopEncoder{}
 	var allText []Text
 	showText := func(s string) {
 		n := 0
@@ -591,8 +596,18 @@ func getContentFromStream(p *Page, strm Value) Content {
 		}
 	}
 
+	var pstack []Point
 	var vLine []Line
 	var hLine []Line
+	closePath := func() {
+		l := len(pstack)
+		if l == 0 {
+			panic("point stack is empty")
+		}
+		if pstack[0] != pstack[l-1] {
+			pstack = append(pstack, pstack[0])
+		}
+	}
 	makeLine := func(pt [2]Point) {
 		l := Line{}
 		if pt[0].X == pt[1].X {
@@ -611,10 +626,25 @@ func getContentFromStream(p *Page, strm Value) Content {
 			println("not V or H %v", fmt.Sprintf("%v", pt))
 		}
 	}
+	stroke := func() {
+		if g.CS {
+			for i := 0; i < len(pstack)-1; i++ {
+				pt := [2]Point{
+					pstack[i],
+					pstack[i+1],
+				}
+				makeLine(pt)
+			}
+		}
+	}
+	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
+	fill := func() {
+		if g.cs {
 
-	var line []Line
-	var lqueue []lstate
-	var gstack []gstate
+		}
+	}
+
+	encDict := map[string]TextEncoding{}
 	Interpret(strm, func(stk *Stack, op string) {
 		n := stk.Len()
 		args := make([]Value, n)
@@ -625,6 +655,96 @@ func getContentFromStream(p *Page, strm Value) Content {
 		default:
 			//fmt.Println(op, args)
 			return
+		/*
+			グラフィック描画の流れ
+			1. グラフィックステート(線の太さとか色とか)を変更
+			2. パスを生成
+			3. 1と2を元に描画(同時に2を初期化)
+		*/
+		// qで現在のステートを保存しQで取り出す。qとQは必ず同数存在する
+		case "q":
+			gstack = append(gstack, g)
+		case "Q":
+			n := len(gstack) - 1
+			if n < 0 {
+				panic("graphic state stack is empty")
+			}
+			g = gstack[n]
+			gstack = gstack[:n]
+
+		// mは複数のパス(l)を1グループに纏めるためのオペレータ
+		case "l", "m":
+			if len(args) != 2 {
+				panic("bad l or m")
+			}
+			// test, _ := ioutil.ReadAll(strm.Reader())
+			// fmt.Printf("%v\n", string(test))
+			pstack = append(pstack, Point{args[0].Float64(), args[1].Float64()})
+		case "re": // 四角形のパスを生成
+			if len(args) != 4 {
+				panic("bad re")
+			}
+			x, y := args[0].Float64(), args[1].Float64()
+			w, h := args[2].Float64(), args[3].Float64()
+			points := []Point{
+				Point{x, y + h},
+				Point{x + w, y + h},
+				Point{x + w, y},
+				Point{x, y},
+				Point{x, y + h},
+			}
+			pstack = append(pstack, points...)
+
+		case "h": // パスを閉じる(最後のポイントから最初のポイントまでパスを引く)
+			closePath()
+		case "n", "b", "b*", "B", "B*", "f", "F", "f*", "S", "s":
+			{
+				switch op {
+				case "b", "b*", "s":
+					closePath()
+				}
+				switch op {
+				case "b", "b*", "B", "B*", "f", "F", "f*":
+					fill()
+				}
+				switch op {
+				case "b", "b*", "B", "B*", "S", "s":
+					stroke()
+				}
+				pstack = []Point{}
+			}
+
+		case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
+			/* 今のところ使用しないためコメントアウト
+			gs := p.Resources().Key("ExtGState").Key(args[0].Name())
+			if gs.Kind() == Dict {
+				fmt.Println(gs.Key("CA")) // ストロークの透明度
+				fmt.Println(gs.Key("ca")) // 塗りつぶしの透明度
+			}
+			*/
+
+		// 塗りつぶしおよびストロークの色設定。0でなければ全て描画するためtrue
+		case "cs", "CS":
+		case "sc", "g", "rg", "k":
+			if len(args) == 1 {
+				g.cs = args[0].Float64() != 1
+			} else {
+				var sum float64 = 0
+				for _, arg := range args {
+					sum += arg.Float64()
+				}
+				g.cs = sum > 0
+			}
+		case "SC", "G", "RG", "K":
+			if len(args) == 1 {
+				g.CS = args[0].Float64() != 1
+			} else {
+				var sum float64 = 0
+				for _, arg := range args {
+					sum += arg.Float64()
+				}
+				g.CS = sum > 0
+			}
 
 		case "cm": // update g.CTM
 			if len(args) != 6 {
@@ -636,53 +756,6 @@ func getContentFromStream(p *Page, strm Value) Content {
 			}
 			m[2][2] = 1
 			g.CTM = m.mul(g.CTM)
-
-		case "gs": // set parameters from graphics state resource
-			/*
-				gs := p.Resources().Key("ExtGState").Key(args[0].Name())
-				font := gs.Key("Font")
-				if font.Kind() == Array && font.Len() == 2 {
-					//fmt.Println("FONT", font)
-				}
-			*/
-
-		case "f": // fill
-		case "g": // setgray
-		case "l": // lineto
-			if len(args) != 2 {
-				panic("bad l")
-			}
-			lqueue = append(lqueue, lstate{"l", args[0].Float64(), args[1].Float64()})
-		case "m": // moveto
-			if len(args) != 2 {
-				panic("bad m")
-			}
-			lqueue = append(lqueue, lstate{"m", args[0].Float64(), args[1].Float64()})
-
-		case "cs": // set colorspace non-stroking
-		case "scn": // set color non-stroking
-
-		case "re": // append rectangle to path
-			if len(args) != 4 {
-				panic("bad re")
-			}
-			x, y, w, h := args[0].Float64(), args[1].Float64(), args[2].Float64(), args[3].Float64()
-			if w < 500 && h < 750 { //でかくて見えない箱が時々ある
-				makeLine([2]Point{{x, y}, {x + w, y}})
-				makeLine([2]Point{{x, y}, {x, y + h}})
-				makeLine([2]Point{{x + w, y}, {x + w, y + h}})
-				makeLine([2]Point{{x, y + h}, {x + w, y + h}})
-			}
-
-		case "q": // save graphics state
-			gstack = append(gstack, g)
-
-		case "Q": // restore graphics state
-			n := len(gstack) - 1
-			if n > -1 {
-				g = gstack[n]
-				gstack = gstack[:n]
-			}
 
 		case "BT": // begin text (reset text matrix and line matrix)
 			g.Tm = ident
@@ -813,28 +886,6 @@ func getContentFromStream(p *Page, strm Value) Content {
 		}
 	})
 
-	for _, l := range lqueue{
-		fmt.Printf("%v\n", l)
-	}
-
-	//lineキューからlineオブジェクトを生成
-	var ptBuf [2]Point
-	hasBuf := false
-	for i := len(lqueue) - 1; i >= 0; i-- {
-		pt := Point{lqueue[i].x, lqueue[i].y}
-		if hasBuf {
-			makeLine([2]Point{ptBuf[1], pt})
-			ptBuf[1] = pt
-			if lqueue[i].tp == "m" {
-				makeLine([2]Point{pt, ptBuf[0]})
-				hasBuf = false
-			}
-		} else {
-			ptBuf[0], ptBuf[1] = pt, pt
-			hasBuf = true
-		}
-	}
-
 	// lineオブジェクトを合成
 	mergeLine := func(line []Line) []Line {
 		sort.Slice(line, func(i, j int) bool {
@@ -896,6 +947,7 @@ func getContentFromStream(p *Page, strm Value) Content {
 	// TODO 振り分けのロジックを表が横並びの場合にも対応させる必要があるかも
 	hLine = append(hLine, *newLine())
 	vLine = append(vLine, *newLine())
+	var line []Line
 	var vhls []vhLine
 	vc, hc := 0, 0
 	for hc < len(hLine)-1 {
