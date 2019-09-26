@@ -6,6 +6,7 @@ package pdf
 
 import (
 	"fmt"
+	// "io/ioutil"
 	"math"
 	"sort"
 	"strings"
@@ -375,10 +376,16 @@ func (x matrix) mul(y matrix) matrix {
 }
 
 func nearlyEqual(x, y float64) bool {
-	return x+0.05 > y && x-0.05 < y
+	return x+1.2 > y && x-1.2 < y
 }
 func isSeperated(x, y float64) bool {
-	return x+0.05 < y
+	return x+1.2 < y
+}
+func contains(t Text, min Point, max Point) bool {
+	return min.X < t.X &&
+		min.Y < t.Y &&
+		max.X > t.X &&
+		max.Y > t.Y
 }
 
 // A Text represents a single piece of text drawn on a page.
@@ -399,12 +406,33 @@ type Line struct {
 	VarMax float64
 }
 
-func newLine() *Line {
+// NewLine constructs a Line
+func NewLine(pt ...Point) *Line {
 	l := new(Line)
-	l.Type = "nil"
-	l.Fix = -1
-	l.VarMin = -1
-	l.VarMax = -1
+	setDefault := func() {
+		l.Type = "nil"
+		l.Fix = -1
+		l.VarMin = -1
+		l.VarMax = -1
+	}
+	if len(pt) == 2 {
+		if pt[0].X == pt[1].X {
+			l.Type = "V"
+			l.Fix = pt[0].X
+			l.VarMin = math.Min(pt[0].Y, pt[1].Y)
+			l.VarMax = math.Max(pt[0].Y, pt[1].Y)
+		} else if pt[0].Y == pt[1].Y {
+			l.Type = "H"
+			l.Fix = pt[0].Y
+			l.VarMin = math.Min(pt[0].X, pt[1].X)
+			l.VarMax = math.Max(pt[0].X, pt[1].X)
+		} else {
+			println("not V or H %v", fmt.Sprintf("%v", pt))
+			setDefault()
+		}
+	} else {
+		setDefault()
+	}
 	return l
 }
 
@@ -420,6 +448,127 @@ func (l *Line) ToXY() [2]Point {
 	return pt
 }
 
+// Lines is a collection of Line
+type Lines struct {
+	v []Line
+	h []Line
+}
+
+// NewLines constructs Lines
+
+// 座標の近い線を合成
+func (ls *Lines) marge() {
+	merge := func(line []Line) []Line {
+		sort.Slice(line, func(i, j int) bool {
+			p, q, ok := line[i], line[j], false
+			if nearlyEqual(p.Fix, q.Fix) {
+				if p.VarMin == q.VarMin {
+					ok = p.VarMax < q.VarMax
+				} else {
+					ok = p.VarMin < q.VarMin
+				}
+			} else {
+				ok = p.Fix < q.Fix
+			}
+			return ok
+		})
+		var mLine []Line
+		var tp string
+		var fix, vmin, vmax float64
+		for i, l := range line {
+			if i == 0 {
+				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
+			}
+			if isSeperated(vmax, l.VarMin) || !nearlyEqual(fix, l.Fix) {
+				mLine = append(mLine, Line{tp, fix, vmin, vmax})
+				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
+			} else {
+				vmax = math.Max(vmax, l.VarMax)
+			}
+			if i == len(line)-1 {
+				mLine = append(mLine, Line{tp, fix, vmin, vmax})
+			}
+		}
+		return mLine
+	}
+	ls.v = merge(ls.v)
+	ls.h = merge(ls.h)
+}
+
+// yが高くxが低い順にソート
+func (ls *Lines) sortYX() {
+	sort.Slice(ls.v, func(i, j int) bool {
+		p, q, ok := ls.v[i], ls.v[j], false
+		if p.VarMax == q.VarMax {
+			ok = p.Fix < q.Fix
+		} else {
+			ok = p.VarMax > q.VarMax
+		}
+		return ok
+	})
+	sort.Slice(ls.h, func(i, j int) bool {
+		p, q, ok := ls.h[i], ls.h[j], false
+		if p.Fix == q.Fix {
+			ok = p.VarMin < q.VarMin
+		} else {
+			ok = p.Fix > q.Fix
+		}
+		return ok
+	})
+}
+
+// xが低くyが高い順にソート(縦線のみ)
+func (ls *Lines) sortXY() {
+	sort.Slice(ls.v, func(i, j int) bool {
+		p, q, ok := ls.v[i], ls.v[j], false
+		if p.Fix == q.Fix {
+			ok = p.VarMax > q.VarMax
+		} else {
+			ok = p.Fix < q.Fix
+		}
+		return ok
+	})
+}
+
+func (ls *Lines) centerLine(w float64) {
+	centerLine := func(line []Line) []Line {
+		var cLine []Line
+		for i := 0; i < len(line); i++ {
+			if i < len(line)-1 {
+				l := line[i : i+2]
+				if l[0].VarMax-l[0].VarMin > w {
+					if math.Abs(l[0].Fix-l[1].Fix) < w {
+						fix := (l[0].Fix + l[1].Fix) / 2
+						vmin := math.Min(l[0].VarMin, l[1].VarMin)
+						vmax := math.Max(l[0].VarMax, l[1].VarMax)
+						cLine = append(cLine, Line{l[0].Type, fix, vmin, vmax})
+						i++
+					} else {
+						cLine = append(cLine, l[0])
+					}
+				}
+			} else {
+				if line[i].VarMax-line[i].VarMin > w {
+					cLine = append(cLine, line[i])
+				}
+			}
+		}
+		return cLine
+	}
+	ls.v = centerLine(ls.v)
+	ls.h = centerLine(ls.h)
+}
+
+func (ls *Lines) append(x *Lines) {
+	ls.v = append(ls.v, x.v...)
+	ls.h = append(ls.h, x.h...)
+}
+
+func (ls *Lines) appendNewLine() {
+	ls.v = append(ls.v, *NewLine())
+	ls.h = append(ls.h, *NewLine())
+}
+
 // A Cell represents a range surrounded by a Line
 type Cell struct {
 	Min  Point
@@ -427,19 +576,15 @@ type Cell struct {
 	Text []Text
 }
 
-// Table is a collection of Cells
+// Table is a collection of Cell
 type Table struct {
 	Min  Point
 	Max  Point
 	Cell []Cell
 }
 
-type vhLine struct {
-	vLine []Line
-	hLine []Line
-}
-
-func newTable(vhl vhLine) *Table {
+// NewTable constructs a Table from Lines
+func NewTable(ls Lines) *Table {
 	crosses := func(hl, vl Line) bool {
 		return vl.VarMax+0.05 > hl.Fix &&
 			hl.Fix > vl.VarMin-0.05 &&
@@ -447,9 +592,9 @@ func newTable(vhl vhLine) *Table {
 			vl.Fix > hl.VarMin-0.05
 	}
 	t := new(Table)
-	for i, hTop := range vhl.hLine {
+	for i, hTop := range ls.h {
 		var vCrossAtTop []Line
-		for _, vl := range vhl.vLine {
+		for _, vl := range ls.v {
 			if crosses(hTop, vl) {
 				vCrossAtTop = append(vCrossAtTop, vl)
 			}
@@ -460,8 +605,8 @@ func newTable(vhl vhLine) *Table {
 		vLeft := vCrossAtTop[0]
 		vCrossAtTop = vCrossAtTop[1:]
 		for _, vRight := range vCrossAtTop {
-			hBottom := *newLine()
-			for _, hl := range vhl.hLine {
+			hBottom := *NewLine()
+			for _, hl := range ls.h {
 				if hTop.Fix > hl.Fix &&
 					crosses(hl, vLeft) &&
 					crosses(hl, vRight) {
@@ -477,12 +622,12 @@ func newTable(vhl vhLine) *Table {
 				vLeft = vRight
 			}
 		}
-		if i == len(vhl.hLine)-2 {
+		if i == len(ls.h)-2 {
 			break
 		}
 	}
-	t.Min = Point{vhl.hLine[0].VarMin, vhl.vLine[0].VarMin}
-	t.Max = Point{vhl.hLine[0].VarMax, vhl.vLine[0].VarMax}
+	t.Min = Point{ls.h[0].VarMin, ls.v[0].VarMin}
+	t.Max = Point{ls.h[0].VarMax, ls.v[0].VarMax}
 	return t
 }
 
@@ -562,6 +707,7 @@ func (p *Page) Contents() Contents {
 }
 
 func getContentFromStream(p *Page, strm Value) Content {
+	result := Content{}
 	// 現在のグラフィックステート
 	var g = gstate{
 		CS:  true,
@@ -573,7 +719,7 @@ func getContentFromStream(p *Page, strm Value) Content {
 	var gstack []gstate
 
 	var enc TextEncoding = &nopEncoder{}
-	var allText []Text
+	var texts []Text
 	showText := func(s string) {
 		n := 0
 		for _, ch := range enc.Decode(s) {
@@ -585,7 +731,7 @@ func getContentFromStream(p *Page, strm Value) Content {
 				if i := strings.Index(f, "+"); i >= 0 {
 					f = f[i+1:]
 				}
-				allText = append(allText, Text{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)})
+				texts = append(texts, Text{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)})
 			}
 			tx := w0/1000*g.Tfs + g.Tc
 			if ch == ' ' {
@@ -597,8 +743,7 @@ func getContentFromStream(p *Page, strm Value) Content {
 	}
 
 	var pstack []Point
-	var vLine []Line
-	var hLine []Line
+	var lines Lines
 	closePath := func() {
 		l := len(pstack)
 		if l == 0 {
@@ -608,39 +753,34 @@ func getContentFromStream(p *Page, strm Value) Content {
 			pstack = append(pstack, pstack[0])
 		}
 	}
-	makeLine := func(pt [2]Point) {
-		l := Line{}
-		if pt[0].X == pt[1].X {
-			l.Type = "V"
-			l.Fix = pt[0].X
-			l.VarMin = math.Min(pt[0].Y, pt[1].Y)
-			l.VarMax = math.Max(pt[0].Y, pt[1].Y)
-			vLine = append(vLine, l)
-		} else if pt[0].Y == pt[1].Y {
-			l.Type = "H"
-			l.Fix = pt[0].Y
-			l.VarMin = math.Min(pt[0].X, pt[1].X)
-			l.VarMax = math.Max(pt[0].X, pt[1].X)
-			hLine = append(hLine, l)
-		} else {
-			println("not V or H %v", fmt.Sprintf("%v", pt))
+	pstackToLine := func() *Lines {
+		ls := new(Lines)
+		for i := 0; i < len(pstack)-1; i++ {
+			l := NewLine(pstack[i], pstack[i+1])
+			switch l.Type {
+			case "V":
+				ls.v = append(ls.v, *l)
+			case "H":
+				ls.h = append(ls.h, *l)
+			}
 		}
+		return ls
 	}
 	stroke := func() {
 		if g.CS {
-			for i := 0; i < len(pstack)-1; i++ {
-				pt := [2]Point{
-					pstack[i],
-					pstack[i+1],
-				}
-				makeLine(pt)
-			}
+			ls := pstackToLine()
+			lines.append(ls)
 		}
 	}
 	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
 	fill := func() {
 		if g.cs {
-
+			w := 1.2 // 線の太さは1.2までを想定
+			ls := pstackToLine()
+			ls.sortYX()
+			ls.sortXY()
+			ls.centerLine(w)
+			lines.append(ls)
 		}
 	}
 
@@ -886,110 +1026,41 @@ func getContentFromStream(p *Page, strm Value) Content {
 		}
 	})
 
-	// lineオブジェクトを合成
-	mergeLine := func(line []Line) []Line {
-		sort.Slice(line, func(i, j int) bool {
-			p, q, ok := line[i], line[j], false
-			if nearlyEqual(p.Fix, q.Fix) {
-				if p.VarMin == q.VarMin {
-					ok = p.VarMax < q.VarMax
-				} else {
-					ok = p.VarMin < q.VarMin
-				}
-			} else {
-				ok = p.Fix < q.Fix
-			}
-			return ok
-		})
-		var mLine []Line
-		var tp string
-		var fix, vmin, vmax float64
-		for i, l := range line {
-			if i == 0 {
-				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
-			}
-			if isSeperated(vmax, l.VarMin) || !nearlyEqual(fix, l.Fix) {
-				mLine = append(mLine, Line{tp, fix, vmin, vmax})
-				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
-			} else {
-				vmax = math.Max(vmax, l.VarMax)
-			}
-			if i == len(line)-1 {
-				mLine = append(mLine, Line{tp, fix, vmin, vmax})
-			}
-		}
-		return mLine
-	}
-	vLine = mergeLine(vLine)
-	hLine = mergeLine(hLine)
-
-	// yが高くxが低い順にソート
-	sort.Slice(vLine, func(i, j int) bool {
-		p, q, ok := vLine[i], vLine[j], false
-		if p.VarMax == q.VarMax {
-			ok = p.Fix < q.Fix
-		} else {
-			ok = p.VarMax > q.VarMax
-		}
-		return ok
-	})
-	sort.Slice(hLine, func(i, j int) bool {
-		p, q, ok := hLine[i], hLine[j], false
-		if p.Fix == q.Fix {
-			ok = p.VarMin < q.VarMin
-		} else {
-			ok = p.Fix > q.Fix
-		}
-		return ok
-	})
+	lines.marge()
+	lines.sortYX()
+	lines.appendNewLine()
 
 	// 線をテーブルごとに振り分け
 	// TODO 振り分けのロジックを表が横並びの場合にも対応させる必要があるかも
-	hLine = append(hLine, *newLine())
-	vLine = append(vLine, *newLine())
-	var line []Line
-	var vhls []vhLine
+	var tableMatl []Lines
 	vc, hc := 0, 0
-	for hc < len(hLine)-1 {
-		if !nearlyEqual(hLine[hc].Fix, vLine[vc].VarMax) {
-			line = append(line, hLine[hc])
+	for hc < len(lines.h)-1 {
+		if !nearlyEqual(lines.h[hc].Fix, lines.v[vc].VarMax) {
+			result.Line = append(result.Line, lines.h[hc])
 			hc++
 		} else {
-			vhl := vhLine{}
-			vEndPoint := vLine[vc].VarMin
-			for !isSeperated(vLine[vc].VarMax, vEndPoint) {
-				vhl.vLine = append(vhl.vLine, vLine[vc])
+			ls := Lines{}
+			vEndPoint := lines.v[vc].VarMin
+			for !isSeperated(lines.v[vc].VarMax, vEndPoint) {
+				ls.v = append(ls.v, lines.v[vc])
 				vc++
 			}
-			for !isSeperated(hLine[hc].Fix, vEndPoint) {
-				vhl.hLine = append(vhl.hLine, hLine[hc])
+			for !isSeperated(lines.h[hc].Fix, vEndPoint) {
+				ls.h = append(ls.h, lines.h[hc])
 				hc++
 			}
-			vhls = append(vhls, vhl)
+			tableMatl = append(tableMatl, ls)
 		}
 	}
 
-	// テーブルの縦線はxが低くyが高い順にソート
-	for _, vhl := range vhls {
-		sort.Slice(vhl.vLine, func(i, j int) bool {
-			p, q, ok := vhl.vLine[i], vhl.vLine[j], false
-			if p.Fix == q.Fix {
-				ok = p.VarMax > q.VarMax
-			} else {
-				ok = p.Fix < q.Fix
-			}
-			return ok
-		})
-	}
-
-	var table []Table
-	for _, vhl := range vhls {
-		table = append(table, *newTable(vhl))
+	for _, ls := range tableMatl {
+		ls.sortXY()
+		result.Table = append(result.Table, *NewTable(ls))
 	}
 
 	//テキストを表に割り当て
-	sort.SliceStable(allText, func(i, j int) bool {
-		p, q, ok := allText[i], allText[j], false
+	sort.SliceStable(texts, func(i, j int) bool {
+		p, q, ok := texts[i], texts[j], false
 		if p.Y == q.Y {
 			ok = p.X < q.X
 		} else {
@@ -997,34 +1068,26 @@ func getContentFromStream(p *Page, strm Value) Content {
 		}
 		return ok
 	})
-
-	contains := func(t Text, min Point, max Point) bool {
-		return min.X < t.X &&
-			min.Y < t.Y &&
-			max.X > t.X &&
-			max.Y > t.Y
-	}
-	var text []Text
-	for _, t := range allText {
+	for _, t := range texts {
 		ok := false
-		for i, tb := range table {
+		for i, tb := range result.Table {
 			if contains(t, tb.Min, tb.Max) {
 				for j, c := range tb.Cell {
 					if contains(t, c.Min, c.Max) {
-						table[i].Cell[j].Text = append(c.Text, t)
+						result.Table[i].Cell[j].Text = append(c.Text, t)
 						ok = true
 					}
 				}
 			}
 		}
 		if !ok {
-			text = append(text, t)
+			result.Text = append(result.Text, t)
 		}
 	}
 
-	table = []Table{}
-	line = append(hLine, vLine...)
-	return Content{text, table, line}
+	// result.Table = []Table{}
+	// result.Line = append(lines.h, lines.v...)
+	return result
 }
 
 // TextVertical implements sort.Interface for sorting
