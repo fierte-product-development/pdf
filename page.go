@@ -753,6 +753,15 @@ func getContentFromStream(p *Page, strm Value) Content {
 			pstack = append(pstack, pstack[0])
 		}
 	}
+	minusPointCheck := func() bool {
+		hasMinus := false
+		for _, p := range pstack {
+			if p.X < 0 || p.Y < 0 {
+				hasMinus = true
+			}
+		}
+		return !hasMinus
+	}
 	pstackToLine := func() *Lines {
 		ls := new(Lines)
 		for i := 0; i < len(pstack)-1; i++ {
@@ -767,14 +776,14 @@ func getContentFromStream(p *Page, strm Value) Content {
 		return ls
 	}
 	stroke := func() {
-		if g.CS {
+		if g.CS && minusPointCheck() {
 			ls := pstackToLine()
 			lines.append(ls)
 		}
 	}
 	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
 	fill := func() {
-		if g.cs {
+		if g.cs && minusPointCheck() {
 			w := 1.2 // 線の太さは1.2までを想定
 			ls := pstackToLine()
 			ls.sortYX()
