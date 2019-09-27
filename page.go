@@ -375,11 +375,12 @@ func (x matrix) mul(y matrix) matrix {
 	return z
 }
 
+// 数値は調整
 func nearlyEqual(x, y float64) bool {
-	return x+1.2 > y && x-1.2 < y
+	return x+1.8 > y && x-1.8 < y
 }
 func isSeperated(x, y float64) bool {
-	return x+1.2 < y
+	return x+1.8 < y
 }
 func contains(t Text, min Point, max Point) bool {
 	return min.X < t.X &&
@@ -586,11 +587,11 @@ type Table struct {
 // NewTable constructs a Table from Lines
 func NewTable(ls Lines) *Table {
 	crosses := func(hl, vl Line) bool {
-		return vl.VarMax+0.05 > hl.Fix &&
-			hl.Fix > vl.VarMin-0.05 &&
-			hl.VarMax+0.05 > vl.Fix &&
-			vl.Fix > hl.VarMin-0.05
-	}
+		return vl.VarMax+1.0 > hl.Fix &&
+			hl.Fix > vl.VarMin-1.0 &&
+			hl.VarMax+1.0 > vl.Fix &&
+			vl.Fix > hl.VarMin-1.0
+	} // 数値は調整
 	t := new(Table)
 	for i, hTop := range ls.h {
 		var vCrossAtTop []Line
@@ -766,7 +767,7 @@ func getContentFromStream(p *Page, streams []Value) Content {
 	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
 	fill := func() {
 		if g.cs && minusPointCheck() {
-			w := 1.2 // 線の太さは1.2までを想定
+			w := 1.8 // 線の太さは1.8までを想定(数値は調整)
 			ls := pstackToLine()
 			ls.sortYX()
 			ls.sortXY()

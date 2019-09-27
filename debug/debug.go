@@ -82,7 +82,7 @@ func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
 func main() {
 	log := true
 	fileNames := []string{
-		"COSMO短信-1",
+		"MEC報告書",
 		//"AVANT短信",
 		/*
 			"COSMO報告書",
