@@ -21,11 +21,11 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePdf(fileName string, fileIdx int, log bool) []pdf.Contents {
+func parsePdf(fileName string, fileIdx int, log bool) []pdf.Content {
 	fileName = fmt.Sprintf("./%v.pdf", fileName)
 	r, _ := pdf.Open(fileName)
 	np := r.NumPage()
-	doc := make([]pdf.Contents, np)
+	doc := make([]pdf.Content, np)
 	var wg sync.WaitGroup
 	for i := 1; i <= np; i++ {
 		wg.Add(1)
@@ -44,31 +44,24 @@ func parsePdf(fileName string, fileIdx int, log bool) []pdf.Contents {
 	return doc
 }
 
-func saveLinePng(cont *pdf.Contents, mbox *pdf.Value, fileIdx int, pageIdx int) {
+func saveLinePng(cont *pdf.Content, mbox *pdf.Value, fileIdx int, pageIdx int) {
 	plt, _ := plot.New()
 	plt.Add(plotter.NewGrid())
 	plt.X.Min = mbox.Index(0).Float64()
 	plt.Y.Min = mbox.Index(1).Float64()
 	plt.X.Max = mbox.Index(2).Float64()
 	plt.Y.Max = mbox.Index(3).Float64()
-	parts := [3]*pdf.Content{
-		&cont.Header,
-		&cont.Footer,
-		&cont.Body,
+	for _, t := range cont.Table {
+		for _, c := range t.Cell {
+			draw(plt, [4]float64{c.Min.X, c.Max.X, c.Max.Y, c.Max.Y}, 0, 0)
+			draw(plt, [4]float64{c.Max.X, c.Max.X, c.Min.Y, c.Max.Y}, 0, 0)
+			draw(plt, [4]float64{c.Min.X, c.Max.X, c.Min.Y, c.Min.Y}, 0, 0)
+			draw(plt, [4]float64{c.Min.X, c.Min.X, c.Min.Y, c.Max.Y}, 0, 0)
+		}
 	}
-	for _, p := range parts {
-		for _, t := range p.Table {
-			for _, c := range t.Cell {
-				draw(plt, [4]float64{c.Min.X, c.Max.X, c.Max.Y, c.Max.Y}, 0, 0)
-				draw(plt, [4]float64{c.Max.X, c.Max.X, c.Min.Y, c.Max.Y}, 0, 0)
-				draw(plt, [4]float64{c.Min.X, c.Max.X, c.Min.Y, c.Min.Y}, 0, 0)
-				draw(plt, [4]float64{c.Min.X, c.Min.X, c.Min.Y, c.Max.Y}, 0, 0)
-			}
-		}
-		for _, l := range p.Line {
-			xy := l.ToXY()
-			draw(plt, [4]float64{xy[0].X, xy[1].X, xy[0].Y, xy[1].Y}, 2, 2)
-		}
+	for _, l := range cont.Line {
+		xy := l.ToXY()
+		draw(plt, [4]float64{xy[0].X, xy[1].X, xy[0].Y, xy[1].Y}, 2, 2)
 	}
 	w := vg.Length(plt.X.Max/100) * vg.Inch
 	h := vg.Length(plt.Y.Max/100) * vg.Inch
@@ -89,7 +82,7 @@ func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
 func main() {
 	log := true
 	fileNames := []string{
-		"こすも",
+		"COSMO短信-1",
 		//"AVANT短信",
 		/*
 			"COSMO報告書",
@@ -103,7 +96,7 @@ func main() {
 		*/
 	}
 	sTime := time.Now()
-	docs := make([][]pdf.Contents, len(fileNames))
+	docs := make([][]pdf.Content, len(fileNames))
 	var wg sync.WaitGroup
 	for i, fn := range fileNames {
 		wg.Add(1)

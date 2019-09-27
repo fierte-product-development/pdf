@@ -637,13 +637,6 @@ type Point struct {
 	Y float64
 }
 
-// Contents contains the content in the page
-type Contents struct {
-	Header Content
-	Footer Content
-	Body   Content
-}
-
 // Content describes the basic content on a page: the text and any drawn lines.
 type Content struct {
 	Text  []Text
@@ -679,34 +672,23 @@ type lstate struct {
 }
 
 // Contents returns the page's content.
-func (p *Page) Contents() Contents {
-	var contents Contents
-
+func (p *Page) Contents() Content {
 	val := p.V.Key("Contents")
+	vals := []Value{}
 	switch val.Kind() {
-	case Array:
+	case Array: // 古いpdfではストリームがサイズ区切りでリストになっていることがある
 		for i := 0; i < val.Len(); i++ {
-			cont := getContentFromStream(p, val.Index(i))
-			if cont.len() > 0 {
-				switch i {
-				case 0:
-					contents.Header = cont
-				case 1:
-					contents.Footer = cont
-				case 2:
-					contents.Body = cont
-				}
-			}
+			vals = append(vals, val.Index(i))
 		}
 	case Stream:
-		contents.Body = getContentFromStream(p, val)
+		vals = append(vals, val)
 	default:
 		println(val.Kind())
 	}
-	return contents
+	return getContentFromStream(p, vals)
 }
 
-func getContentFromStream(p *Page, strm Value) Content {
+func getContentFromStream(p *Page, streams []Value) Content {
 	result := Content{}
 	// 現在のグラフィックステート
 	var g = gstate{
@@ -794,246 +776,248 @@ func getContentFromStream(p *Page, strm Value) Content {
 	}
 
 	encDict := map[string]TextEncoding{}
-	Interpret(strm, func(stk *Stack, op string) {
-		n := stk.Len()
-		args := make([]Value, n)
-		for i := n - 1; i >= 0; i-- {
-			args[i] = stk.Pop()
-		}
-		switch op {
-		default:
-			//fmt.Println(op, args)
-			return
-		/*
-			グラフィック描画の流れ
-			1. グラフィックステート(線の太さとか色とか)を変更
-			2. パスを生成
-			3. 1と2を元に描画(同時に2を初期化)
-		*/
-		// qで現在のステートを保存しQで取り出す。qとQは必ず同数存在する
-		case "q":
-			gstack = append(gstack, g)
-		case "Q":
-			n := len(gstack) - 1
-			if n < 0 {
-				panic("graphic state stack is empty")
+	for _, strm := range streams {
+		Interpret(strm, func(stk *Stack, op string) {
+			n := stk.Len()
+			args := make([]Value, n)
+			for i := n - 1; i >= 0; i-- {
+				args[i] = stk.Pop()
 			}
-			g = gstack[n]
-			gstack = gstack[:n]
-
-		// mは複数のパス(l)を1グループに纏めるためのオペレータ
-		case "l", "m":
-			if len(args) != 2 {
-				panic("bad l or m")
-			}
-			// test, _ := ioutil.ReadAll(strm.Reader())
-			// fmt.Printf("%v\n", string(test))
-			pstack = append(pstack, Point{args[0].Float64(), args[1].Float64()})
-		case "re": // 四角形のパスを生成
-			if len(args) != 4 {
-				panic("bad re")
-			}
-			x, y := args[0].Float64(), args[1].Float64()
-			w, h := args[2].Float64(), args[3].Float64()
-			points := []Point{
-				Point{x, y + h},
-				Point{x + w, y + h},
-				Point{x + w, y},
-				Point{x, y},
-				Point{x, y + h},
-			}
-			pstack = append(pstack, points...)
-
-		case "h": // パスを閉じる(最後のポイントから最初のポイントまでパスを引く)
-			closePath()
-		case "n", "b", "b*", "B", "B*", "f", "F", "f*", "S", "s":
-			{
-				switch op {
-				case "b", "b*", "s":
-					closePath()
-				}
-				switch op {
-				case "b", "b*", "B", "B*", "f", "F", "f*":
-					fill()
-				}
-				switch op {
-				case "b", "b*", "B", "B*", "S", "s":
-					stroke()
-				}
-				pstack = []Point{}
-			}
-
-		case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
-			/* 今のところ使用しないためコメントアウト
-			gs := p.Resources().Key("ExtGState").Key(args[0].Name())
-			if gs.Kind() == Dict {
-				fmt.Println(gs.Key("CA")) // ストロークの透明度
-				fmt.Println(gs.Key("ca")) // 塗りつぶしの透明度
-			}
+			switch op {
+			default:
+				//fmt.Println(op, args)
+				return
+			/*
+				グラフィック描画の流れ
+				1. グラフィックステート(線の太さとか色とか)を変更
+				2. パスを生成
+				3. 1と2を元に描画(同時に2を初期化)
 			*/
-
-		// 塗りつぶしおよびストロークの色設定。0でなければ全て描画するためtrue
-		case "cs", "CS":
-		case "sc", "g", "rg", "k":
-			if len(args) == 1 {
-				g.cs = args[0].Float64() != 1
-			} else {
-				var sum float64 = 0
-				for _, arg := range args {
-					sum += arg.Float64()
+			// qで現在のステートを保存しQで取り出す。qとQは必ず同数存在する
+			case "q":
+				gstack = append(gstack, g)
+			case "Q":
+				n := len(gstack) - 1
+				if n < 0 {
+					panic("graphic state stack is empty")
 				}
-				g.cs = sum > 0
-			}
-		case "SC", "G", "RG", "K":
-			if len(args) == 1 {
-				g.CS = args[0].Float64() != 1
-			} else {
-				var sum float64 = 0
-				for _, arg := range args {
-					sum += arg.Float64()
+				g = gstack[n]
+				gstack = gstack[:n]
+
+			// mは複数のパス(l)を1グループに纏めるためのオペレータ
+			case "l", "m":
+				if len(args) != 2 {
+					panic("bad l or m")
 				}
-				g.CS = sum > 0
-			}
+				// test, _ := ioutil.ReadAll(strm.Reader())
+				// fmt.Printf("%v\n", string(test))
+				pstack = append(pstack, Point{args[0].Float64(), args[1].Float64()})
+			case "re": // 四角形のパスを生成
+				if len(args) != 4 {
+					panic("bad re")
+				}
+				x, y := args[0].Float64(), args[1].Float64()
+				w, h := args[2].Float64(), args[3].Float64()
+				points := []Point{
+					Point{x, y + h},
+					Point{x + w, y + h},
+					Point{x + w, y},
+					Point{x, y},
+					Point{x, y + h},
+				}
+				pstack = append(pstack, points...)
 
-		case "cm": // update g.CTM
-			if len(args) != 6 {
-				panic("bad g.Tm")
-			}
-			var m matrix
-			for i := 0; i < 6; i++ {
-				m[i/2][i%2] = args[i].Float64()
-			}
-			m[2][2] = 1
-			g.CTM = m.mul(g.CTM)
+			case "h": // パスを閉じる(最後のポイントから最初のポイントまでパスを引く)
+				closePath()
+			case "n", "b", "b*", "B", "B*", "f", "F", "f*", "S", "s":
+				{
+					switch op {
+					case "b", "b*", "s":
+						closePath()
+					}
+					switch op {
+					case "b", "b*", "B", "B*", "f", "F", "f*":
+						fill()
+					}
+					switch op {
+					case "b", "b*", "B", "B*", "S", "s":
+						stroke()
+					}
+					pstack = []Point{}
+				}
 
-		case "BT": // begin text (reset text matrix and line matrix)
-			g.Tm = ident
-			g.Tlm = g.Tm
+			case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
+				/* 今のところ使用しないためコメントアウト
+				gs := p.Resources().Key("ExtGState").Key(args[0].Name())
+				if gs.Kind() == Dict {
+					fmt.Println(gs.Key("CA")) // ストロークの透明度
+					fmt.Println(gs.Key("ca")) // 塗りつぶしの透明度
+				}
+				*/
 
-		case "ET": // end text
-
-		case "T*": // move to start of next line
-			x := matrix{{1, 0, 0}, {0, 1, 0}, {0, -g.Tl, 1}}
-			g.Tlm = x.mul(g.Tlm)
-			g.Tm = g.Tlm
-
-		case "Tc": // set character spacing
-			if len(args) != 1 {
-				panic("bad g.Tc")
-			}
-			g.Tc = args[0].Float64()
-
-		case "TD": // move text position and set leading
-			if len(args) != 2 {
-				panic("bad Td")
-			}
-			g.Tl = -args[1].Float64()
-			fallthrough
-		case "Td": // move text position
-			if len(args) != 2 {
-				panic("bad Td")
-			}
-			tx := args[0].Float64()
-			ty := args[1].Float64()
-			x := matrix{{1, 0, 0}, {0, 1, 0}, {tx, ty, 1}}
-			g.Tlm = x.mul(g.Tlm)
-			g.Tm = g.Tlm
-
-		case "Tf": // set text font and size
-			if len(args) != 2 {
-				panic("bad TL")
-			}
-			f := args[0].Name()
-			g.Tf = p.Font(f)
-			if v, ok := encDict[f]; ok {
-				enc = v
-			} else {
-				enc = g.Tf.Encoder()
-				encDict[f] = enc
-			}
-			if enc == nil {
-				println("no cmap for", f)
-				enc = &nopEncoder{}
-			}
-			g.Tfs = args[1].Float64()
-
-		case "\"": // set spacing, move to next line, and show text
-			if len(args) != 3 {
-				panic("bad \" operator")
-			}
-			g.Tw = args[0].Float64()
-			g.Tc = args[1].Float64()
-			args = args[2:]
-			fallthrough
-		case "'": // move to next line and show text
-			if len(args) != 1 {
-				panic("bad ' operator")
-			}
-			x := matrix{{1, 0, 0}, {0, 1, 0}, {0, -g.Tl, 1}}
-			g.Tlm = x.mul(g.Tlm)
-			g.Tm = g.Tlm
-			fallthrough
-		case "Tj": // show text
-			if len(args) != 1 {
-				panic("bad Tj operator")
-			}
-			showText(args[0].RawString())
-
-		case "TJ": // show text, allowing individual glyph positioning
-			v := args[0]
-			for i := 0; i < v.Len(); i++ {
-				x := v.Index(i)
-				if x.Kind() == String {
-					showText(x.RawString())
+			// 塗りつぶしおよびストロークの色設定。0でなければ全て描画するためtrue
+			case "cs", "CS":
+			case "sc", "g", "rg", "k":
+				if len(args) == 1 {
+					g.cs = args[0].Float64() != 1
 				} else {
-					tx := -x.Float64() / 1000 * g.Tfs * g.Th
-					g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
+					var sum float64 = 0
+					for _, arg := range args {
+						sum += arg.Float64()
+					}
+					g.cs = sum > 0
 				}
-			}
+			case "SC", "G", "RG", "K":
+				if len(args) == 1 {
+					g.CS = args[0].Float64() != 1
+				} else {
+					var sum float64 = 0
+					for _, arg := range args {
+						sum += arg.Float64()
+					}
+					g.CS = sum > 0
+				}
 
-		case "TL": // set text leading
-			if len(args) != 1 {
-				panic("bad TL")
-			}
-			g.Tl = args[0].Float64()
+			case "cm": // update g.CTM
+				if len(args) != 6 {
+					panic("bad g.Tm")
+				}
+				var m matrix
+				for i := 0; i < 6; i++ {
+					m[i/2][i%2] = args[i].Float64()
+				}
+				m[2][2] = 1
+				g.CTM = m.mul(g.CTM)
 
-		case "Tm": // set text matrix and line matrix
-			if len(args) != 6 {
-				panic("bad g.Tm")
-			}
-			var m matrix
-			for i := 0; i < 6; i++ {
-				m[i/2][i%2] = args[i].Float64()
-			}
-			m[2][2] = 1
-			g.Tm = m
-			g.Tlm = m
+			case "BT": // begin text (reset text matrix and line matrix)
+				g.Tm = ident
+				g.Tlm = g.Tm
 
-		case "Tr": // set text rendering mode
-			if len(args) != 1 {
-				panic("bad Tr")
-			}
-			g.Tmode = int(args[0].Int64())
+			case "ET": // end text
 
-		case "Ts": // set text rise
-			if len(args) != 1 {
-				panic("bad Ts")
-			}
-			g.Trise = args[0].Float64()
+			case "T*": // move to start of next line
+				x := matrix{{1, 0, 0}, {0, 1, 0}, {0, -g.Tl, 1}}
+				g.Tlm = x.mul(g.Tlm)
+				g.Tm = g.Tlm
 
-		case "Tw": // set word spacing
-			if len(args) != 1 {
-				panic("bad g.Tw")
-			}
-			g.Tw = args[0].Float64()
+			case "Tc": // set character spacing
+				if len(args) != 1 {
+					panic("bad g.Tc")
+				}
+				g.Tc = args[0].Float64()
 
-		case "Tz": // set horizontal text scaling
-			if len(args) != 1 {
-				panic("bad Tz")
+			case "TD": // move text position and set leading
+				if len(args) != 2 {
+					panic("bad Td")
+				}
+				g.Tl = -args[1].Float64()
+				fallthrough
+			case "Td": // move text position
+				if len(args) != 2 {
+					panic("bad Td")
+				}
+				tx := args[0].Float64()
+				ty := args[1].Float64()
+				x := matrix{{1, 0, 0}, {0, 1, 0}, {tx, ty, 1}}
+				g.Tlm = x.mul(g.Tlm)
+				g.Tm = g.Tlm
+
+			case "Tf": // set text font and size
+				if len(args) != 2 {
+					panic("bad TL")
+				}
+				f := args[0].Name()
+				g.Tf = p.Font(f)
+				if v, ok := encDict[f]; ok {
+					enc = v
+				} else {
+					enc = g.Tf.Encoder()
+					encDict[f] = enc
+				}
+				if enc == nil {
+					println("no cmap for", f)
+					enc = &nopEncoder{}
+				}
+				g.Tfs = args[1].Float64()
+
+			case "\"": // set spacing, move to next line, and show text
+				if len(args) != 3 {
+					panic("bad \" operator")
+				}
+				g.Tw = args[0].Float64()
+				g.Tc = args[1].Float64()
+				args = args[2:]
+				fallthrough
+			case "'": // move to next line and show text
+				if len(args) != 1 {
+					panic("bad ' operator")
+				}
+				x := matrix{{1, 0, 0}, {0, 1, 0}, {0, -g.Tl, 1}}
+				g.Tlm = x.mul(g.Tlm)
+				g.Tm = g.Tlm
+				fallthrough
+			case "Tj": // show text
+				if len(args) != 1 {
+					panic("bad Tj operator")
+				}
+				showText(args[0].RawString())
+
+			case "TJ": // show text, allowing individual glyph positioning
+				v := args[0]
+				for i := 0; i < v.Len(); i++ {
+					x := v.Index(i)
+					if x.Kind() == String {
+						showText(x.RawString())
+					} else {
+						tx := -x.Float64() / 1000 * g.Tfs * g.Th
+						g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
+					}
+				}
+
+			case "TL": // set text leading
+				if len(args) != 1 {
+					panic("bad TL")
+				}
+				g.Tl = args[0].Float64()
+
+			case "Tm": // set text matrix and line matrix
+				if len(args) != 6 {
+					panic("bad g.Tm")
+				}
+				var m matrix
+				for i := 0; i < 6; i++ {
+					m[i/2][i%2] = args[i].Float64()
+				}
+				m[2][2] = 1
+				g.Tm = m
+				g.Tlm = m
+
+			case "Tr": // set text rendering mode
+				if len(args) != 1 {
+					panic("bad Tr")
+				}
+				g.Tmode = int(args[0].Int64())
+
+			case "Ts": // set text rise
+				if len(args) != 1 {
+					panic("bad Ts")
+				}
+				g.Trise = args[0].Float64()
+
+			case "Tw": // set word spacing
+				if len(args) != 1 {
+					panic("bad g.Tw")
+				}
+				g.Tw = args[0].Float64()
+
+			case "Tz": // set horizontal text scaling
+				if len(args) != 1 {
+					panic("bad Tz")
+				}
+				g.Th = args[0].Float64() / 100
 			}
-			g.Th = args[0].Float64() / 100
-		}
-	})
+		})
+	}
 
 	lines.marge()
 	lines.sortYX()
@@ -1067,7 +1051,7 @@ func getContentFromStream(p *Page, strm Value) Content {
 		result.Table = append(result.Table, *NewTable(ls))
 	}
 
-	//テキストを表に割り当て
+	//テキストをテーブルに割り当て
 	sort.SliceStable(texts, func(i, j int) bool {
 		p, q, ok := texts[i], texts[j], false
 		if p.Y == q.Y {
