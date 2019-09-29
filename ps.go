@@ -7,6 +7,7 @@ package pdf
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 )
 
 // A Stack represents a stack of values.
@@ -37,6 +38,12 @@ func newDict() Value {
 	return Value{nil, objptr{}, make(dict)}
 }
 
+// Interpreted is used by Interpret. Set either Value or io.Reader
+type Interpreted struct {
+	val Value
+	r   io.Reader
+}
+
 // Interpret interprets the content in a stream as a basic PostScript program,
 // pushing values onto a stack and then calling the do function to execute
 // operators. The do function may push or pop values from the stack as needed
@@ -51,8 +58,13 @@ func newDict() Value {
 //
 // There is no support for executable blocks, among other limitations.
 //
-func Interpret(strm Value, do func(stk *Stack, op string)) {
-	rd := strm.Reader()
+func Interpret(interpreted Interpreted, do func(stk *Stack, op string)) {
+	var rd io.ReadCloser
+	if interpreted.val.IsNull() {
+		rd = ioutil.NopCloser(interpreted.r)
+	} else {
+		rd = interpreted.val.Reader()
+	}
 	b := newBuffer(rd, 0)
 	b.allowEOF = true
 	b.allowObjptr = false

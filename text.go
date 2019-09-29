@@ -51,6 +51,13 @@ func utf16Decode(s string) string {
 	return string(utf16.Decode(u))
 }
 
+type utf16beEncoder struct {
+}
+
+func (e *utf16beEncoder) Decode(raw string) (text string) {
+	return utf16Decode(raw)
+}
+
 // See PDF 32000-1:2008, Table D.2
 var pdfDocEncoding = [256]rune{
 	noRune, noRune, noRune, noRune, noRune, noRune, noRune, noRune,

@@ -6,7 +6,7 @@ package pdf
 
 import (
 	"fmt"
-	// "io/ioutil"
+	"io/ioutil"
 	"math"
 	"sort"
 	"strings"
@@ -145,13 +145,13 @@ func (f Font) Encoder() TextEncoding {
 			return &byteEncoder{&winAnsiEncoding}
 		case "MacRomanEncoding":
 			return &byteEncoder{&macRomanEncoding}
-		// case "Identity-H":
-		// TODO: Should be big-endian UCS-2 decoder
+		case "UniJIS-UTF16-V", "UniJIS-UTF16-H":
+			return &utf16beEncoder{}
 		default:
 			toUnicode := f.V.Key("ToUnicode")
 			switch toUnicode.Kind() {
 			case Stream, Dict:
-				cm := readCmap(toUnicode)
+				cm := readCmap(Interpreted{val: toUnicode})
 				if cm == nil {
 					println("nil cmap", enc.Name())
 					return &nopEncoder{}
@@ -248,22 +248,13 @@ Parse:
 					raw = raw[n:]
 					for _, bf := range m.bfrange {
 						if len(bf.lo) == n && bf.lo <= text && text <= bf.hi {
-							if bf.dst.Kind() == String {
-								s := bf.dst.RawString()
-								if bf.lo != text {
-									b := []byte(s)
-									b[len(b)-1] += text[len(text)-1] - bf.lo[len(bf.lo)-1]
-									s = string(b)
-								}
-								r = append(r, []rune(utf16Decode(s))...)
-								continue Parse
+							s := bf.dst
+							if bf.lo != text {
+								b := []byte(s)
+								b[len(b)-1] += text[len(text)-1] - bf.lo[len(bf.lo)-1]
+								s = string(b)
 							}
-							if bf.dst.Kind() == Array {
-								fmt.Printf("array %v\n", bf.dst)
-							} else {
-								fmt.Printf("unknown dst %v\n", bf.dst)
-							}
-							r = append(r, noRune)
+							r = append(r, []rune(utf16Decode(s))...)
 							continue Parse
 						}
 					}
@@ -283,13 +274,27 @@ Parse:
 type bfrange struct {
 	lo  string
 	hi  string
-	dst Value
+	dst string
 }
 
-func readCmap(toUnicode Value) *cmap {
+func readCmap(toUnicode Interpreted) *cmap {
 	n := -1
 	var m cmap
 	ok := true
+	uni := func(val Value) string {
+		switch val.Kind() {
+		case String:
+			return val.RawString()
+		case Integer:
+			return fmt.Sprintf("%U", val.Int64())[2:]
+		case Array:
+			fmt.Printf("array %v\n", val)
+			return ""
+		default:
+			fmt.Printf("unknown cmap %v\n", val)
+			return ""
+		}
+	}
 	Interpret(toUnicode, func(stk *Stack, op string) {
 		if !ok {
 			return
@@ -322,24 +327,24 @@ func readCmap(toUnicode Value) *cmap {
 				m.space[len(lo)-1] = append(m.space[len(lo)-1], [2]string{lo, hi})
 			}
 			n = -1
-		case "beginbfrange":
+		case "beginbfrange", "begincidrange":
 			n = int(stk.Pop().Int64())
-		case "endbfrange":
+		case "endbfrange", "endcidrange":
 			if n < 0 {
 				panic("missing beginbfrange")
 			}
 			for i := 0; i < n; i++ {
-				dst, srcHi, srcLo := stk.Pop(), stk.Pop().RawString(), stk.Pop().RawString()
+				dst, srcHi, srcLo := uni(stk.Pop()), uni(stk.Pop()), uni(stk.Pop())
 				m.bfrange = append(m.bfrange, bfrange{srcLo, srcHi, dst})
 			}
-		case "beginbfchar":
+		case "beginbfchar", "begincidchar":
 			n = int(stk.Pop().Int64())
-		case "endbfchar":
+		case "endbfchar", "endcidchar":
 			if n < 0 {
 				panic("missing beginbfchar")
 			}
 			for i := 0; i < n; i++ {
-				dst, srcHi := stk.Pop(), stk.Pop().RawString()
+				dst, srcHi := uni(stk.Pop()), uni(stk.Pop())
 				srcLo := srcHi
 				m.bfrange = append(m.bfrange, bfrange{srcLo, srcHi, dst})
 			}
@@ -428,7 +433,7 @@ func NewLine(pt ...Point) *Line {
 			l.VarMin = math.Min(pt[0].X, pt[1].X)
 			l.VarMax = math.Max(pt[0].X, pt[1].X)
 		} else {
-			println("not V or H %v", fmt.Sprintf("%v", pt))
+			println("Line is neither vertical nor horizontal. ", fmt.Sprintf("%v", pt))
 			setDefault()
 		}
 	} else {
@@ -658,6 +663,7 @@ type gstate struct {
 	Tl    float64
 	Tf    Font
 	Tfs   float64
+	Tfe   TextEncoding // 存在しないオペレータだが毎回Fontからエンコーディングを抽出すると遅いので追加
 	Tmode int
 	Trise float64
 	Tm    matrix
@@ -701,11 +707,10 @@ func getContentFromStream(p *Page, streams []Value) Content {
 	// qオペレータなどでグラフィックステートを一時保存するためのスタック
 	var gstack []gstate
 
-	var enc TextEncoding = &nopEncoder{}
 	var texts []Text
 	showText := func(s string) {
 		n := 0
-		for _, ch := range enc.Decode(s) {
+		for _, ch := range g.Tfe.Decode(s) {
 			Trm := matrix{{g.Tfs * g.Th, 0, 0}, {0, g.Tfs, 0}, {0, g.Trise, 1}}.mul(g.Tm).mul(g.CTM)
 			w0 := g.Tf.Width(int(s[n]))
 			n++
@@ -713,6 +718,9 @@ func getContentFromStream(p *Page, streams []Value) Content {
 				f := g.Tf.BaseFont()
 				if i := strings.Index(f, "+"); i >= 0 {
 					f = f[i+1:]
+				} else {
+					// 文字コードを認識することが不可能なためそのまま表記
+					f = fmt.Sprintf("%X", f)
 				}
 				texts = append(texts, Text{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)})
 			}
@@ -767,7 +775,7 @@ func getContentFromStream(p *Page, streams []Value) Content {
 	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
 	fill := func() {
 		if g.cs && minusPointCheck() {
-			w := 1.8 // 線の太さは1.8までを想定(数値は調整)
+			w := 1.8 // 線の太さ(数値は調整)
 			ls := pstackToLine()
 			ls.sortYX()
 			ls.sortXY()
@@ -778,7 +786,7 @@ func getContentFromStream(p *Page, streams []Value) Content {
 
 	encDict := map[string]TextEncoding{}
 	for _, strm := range streams {
-		Interpret(strm, func(stk *Stack, op string) {
+		Interpret(Interpreted{val: strm}, func(stk *Stack, op string) {
 			n := stk.Len()
 			args := make([]Value, n)
 			for i := n - 1; i >= 0; i-- {
@@ -810,8 +818,6 @@ func getContentFromStream(p *Page, streams []Value) Content {
 				if len(args) != 2 {
 					panic("bad l or m")
 				}
-				// test, _ := ioutil.ReadAll(strm.Reader())
-				// fmt.Printf("%v\n", string(test))
 				pstack = append(pstack, Point{args[0].Float64(), args[1].Float64()})
 			case "re": // 四角形のパスを生成
 				if len(args) != 4 {
@@ -925,19 +931,19 @@ func getContentFromStream(p *Page, streams []Value) Content {
 
 			case "Tf": // set text font and size
 				if len(args) != 2 {
-					panic("bad TL")
+					panic("bad Tf")
 				}
 				f := args[0].Name()
 				g.Tf = p.Font(f)
 				if v, ok := encDict[f]; ok {
-					enc = v
+					g.Tfe = v
 				} else {
-					enc = g.Tf.Encoder()
-					encDict[f] = enc
+					g.Tfe = g.Tf.Encoder()
+					encDict[f] = g.Tfe
 				}
-				if enc == nil {
+				if g.Tfe == nil {
 					println("no cmap for", f)
-					enc = &nopEncoder{}
+					g.Tfe = &nopEncoder{}
 				}
 				g.Tfs = args[1].Float64()
 
@@ -1133,4 +1139,9 @@ func buildOutline(entry Value) Outline {
 		x.Child = append(x.Child, buildOutline(child))
 	}
 	return x
+}
+
+func printStream(val Value) {
+	bt, _ := ioutil.ReadAll(val.Reader())
+	fmt.Printf("%v\n", string(bt))
 }
