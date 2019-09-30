@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"math"
+	"os"
 	"sort"
 	"strings"
 )
@@ -258,7 +259,7 @@ Parse:
 							continue Parse
 						}
 					}
-					fmt.Printf("no text for %q", text)
+					fmt.Fprintf(os.Stderr, "no text for %q\n", text)
 					r = append(r, noRune)
 					continue Parse
 				}
@@ -288,10 +289,10 @@ func readCmap(toUnicode Interpreted) *cmap {
 		case Integer:
 			return fmt.Sprintf("%U", val.Int64())[2:]
 		case Array:
-			fmt.Printf("array %v\n", val)
+			fmt.Fprintf(os.Stderr, "array %v\n", val)
 			return ""
 		default:
-			fmt.Printf("unknown cmap %v\n", val)
+			fmt.Fprintf(os.Stderr, "unknown cmap %v\n", val)
 			return ""
 		}
 	}
@@ -433,7 +434,7 @@ func NewLine(pt ...Point) *Line {
 			l.VarMin = math.Min(pt[0].X, pt[1].X)
 			l.VarMax = math.Max(pt[0].X, pt[1].X)
 		} else {
-			println("Line is neither vertical nor horizontal. ", fmt.Sprintf("%v", pt))
+			fmt.Fprintf(os.Stderr, "Line is neither vertical nor horizontal. %v\n", pt)
 			setDefault()
 		}
 	} else {

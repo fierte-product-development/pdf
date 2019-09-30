@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Reading of PDF tokens and objects from a raw byte stream.
+// デバッグ用
+// json.goとだいたい同じ
 
 package main
 
@@ -21,7 +22,7 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePdf(fileName string, fileIdx int, log bool) []pdf.Content {
+func parsePage(fileName string, fileIdx int, log bool) []pdf.Content {
 	fileName = fmt.Sprintf("./%v.pdf", fileName)
 	r, _ := pdf.Open(fileName)
 	np := r.NumPage()
@@ -101,7 +102,7 @@ func main() {
 	for i, fn := range fileNames {
 		wg.Add(1)
 		func(fn string, i int) { //go
-			docs[i] = parsePdf(fn, i, log)
+			docs[i] = parsePage(fn, i, log)
 			wg.Done()
 		}(fn, i)
 	}
