@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// PDFファイルのパスの配列を受け取ってContentオブジェクトの配列をJsonで返す
-// logをtrueにするとjsonファイルとついでにラインの解析結果をプロットしたpngファイルを作成する
+// PDFファイルのパスの配列を受け取ってContentオブジェクトの配列をjsonで返す
+// toStdoutがtrueの場合jsonを標準出力に流す
+// falseの場合jsonファイルとついでにラインの解析結果をプロットしたpngファイルを出力する
 
 package pdf
 
@@ -21,7 +22,7 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePage(fileName string, fileIdx int, log bool) []Content {
+func parsePage(fileName string, fileIdx int, toStdout bool) []Content {
 	r, _ := Open(fileName)
 	np := r.NumPage()
 	doc := make([]Content, np)
@@ -31,7 +32,7 @@ func parsePage(fileName string, fileIdx int, log bool) []Content {
 		go func(i int) {
 			pg := r.Page(i)
 			cont := pg.Contents()
-			if log {
+			if !toStdout {
 				mb := pg.V.Key("MediaBox")
 				saveLinePng(&cont, &mb, fileIdx, i)
 			}
@@ -78,26 +79,26 @@ func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
 	plt.Add(l, s)
 }
 
-// JSON receives an array of paths and outputs content object array and time as stdout.
-func JSON(fileNames []string, log bool) {
+// JSON receives an array of paths and outputs array of content objects as JSON.
+func JSON(fileNames []string, toStdout bool) {
 	sTime := time.Now()
 	docs := make([][]Content, len(fileNames))
 	var wg sync.WaitGroup
 	for i, fn := range fileNames {
 		wg.Add(1)
 		go func(fn string, i int) {
-			docs[i] = parsePage(fn, i, log)
+			docs[i] = parsePage(fn, i, toStdout)
 			wg.Done()
 		}(fn, i)
 	}
 	wg.Wait()
 	js, _ := json.MarshalIndent(docs, "", "  ")
-	if log {
+	if toStdout {
+		os.Stdout.Write(js)
+	} else {
 		ioutil.WriteFile("docs.json", js, os.ModePerm)
 		eTime := time.Now()
 		time := eTime.Sub(sTime).Seconds()
 		fmt.Printf("complete. time: %fs\n", time)
-	} else {
-		os.Stdout.Write(js)
 	}
 }

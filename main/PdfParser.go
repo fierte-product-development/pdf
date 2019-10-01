@@ -2,8 +2,8 @@ package main
 
 import (
 	"flag"
+	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/rsc.io/pdf"
 )
@@ -11,10 +11,16 @@ import (
 func main() {
 	flag.Parse()
 	args := flag.Args()
-	log, _ := strconv.ParseBool(args[0])
-	path := args[1:]
-	for i, p := range path {
-		path[i] = strings.ReplaceAll(p, "\\", "/")
+	var path []string
+	toStdout, err := strconv.ParseBool(args[0])
+	if err != nil {
+		toStdout = false
+		path = args
+	} else {
+		path = args[1:]
 	}
-	pdf.JSON(path, log)
+	for i, p := range path {
+		path[i] = filepath.FromSlash(p)
+	}
+	pdf.JSON(path, toStdout)
 }
