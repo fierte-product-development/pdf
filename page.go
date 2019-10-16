@@ -715,7 +715,8 @@ func getContentFromStream(p *Page, streams []Value) Content {
 			Trm := matrix{{g.Tfs * g.Th, 0, 0}, {0, g.Tfs, 0}, {0, g.Trise, 1}}.mul(g.Tm).mul(g.CTM)
 			w0 := g.Tf.Width(int(s[n]))
 			n++
-			if ch != ' ' {
+			isSpace := strings.TrimSpace(string(ch)) == ""
+			if !isSpace {
 				f := g.Tf.BaseFont()
 				if i := strings.Index(f, "+"); i >= 0 {
 					f = f[i+1:]
@@ -726,7 +727,7 @@ func getContentFromStream(p *Page, streams []Value) Content {
 				texts = append(texts, Text{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)})
 			}
 			tx := w0/1000*g.Tfs + g.Tc
-			if ch == ' ' {
+			if isSpace {
 				tx += g.Tw
 			}
 			tx *= g.Th
