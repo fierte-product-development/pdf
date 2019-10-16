@@ -103,7 +103,7 @@ func JSON(filePaths []string, toStdout bool) {
 	if toStdout {
 		os.Stdout.Write(js)
 	} else {
-		ioutil.WriteFile("docs.json", js, os.ModePerm)
+		ioutil.WriteFile("pdf_parsed.json", js, os.ModePerm)
 		eTime := time.Now()
 		time := eTime.Sub(sTime).Seconds()
 		fmt.Printf("complete. time: %fs\n", time)
