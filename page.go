@@ -146,7 +146,7 @@ func (f Font) Encoder() TextEncoding {
 			return &byteEncoder{&winAnsiEncoding}
 		case "MacRomanEncoding":
 			return &byteEncoder{&macRomanEncoding}
-		case "UniJIS-UTF16-V", "UniJIS-UTF16-H":
+		case "UniJIS-UTF16-V", "UniJIS-UTF16-H", "UniJIS-UCS2-V", "UniJIS-UCS2-H":
 			return &utf16beEncoder{}
 		default:
 			toUnicode := f.V.Key("ToUnicode")

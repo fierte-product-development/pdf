@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -22,9 +23,9 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePage(fileName string, fileIdx int, log bool) []pdf.Content {
-	fileName = fmt.Sprintf("./%v.pdf", fileName)
-	r, _ := pdf.Open(fileName)
+func parsePage(fileName string, log bool) []pdf.Content {
+	filePath := fmt.Sprintf("./%v.pdf", fileName)
+	r, _ := pdf.Open(filePath)
 	np := r.NumPage()
 	doc := make([]pdf.Content, np)
 	var wg sync.WaitGroup
@@ -35,7 +36,7 @@ func parsePage(fileName string, fileIdx int, log bool) []pdf.Content {
 			cont := pg.Contents()
 			if log {
 				mb := pg.V.Key("MediaBox")
-				saveLinePng(&cont, &mb, fileIdx, i)
+				saveLinePng(&cont, &mb, filePath, i)
 			}
 			doc[i-1] = cont
 			wg.Done()
@@ -45,7 +46,7 @@ func parsePage(fileName string, fileIdx int, log bool) []pdf.Content {
 	return doc
 }
 
-func saveLinePng(cont *pdf.Content, mbox *pdf.Value, fileIdx int, pageIdx int) {
+func saveLinePng(cont *pdf.Content, mbox *pdf.Value, filePath string, pageIdx int) {
 	plt, _ := plot.New()
 	plt.Add(plotter.NewGrid())
 	plt.X.Min = mbox.Index(0).Float64()
@@ -66,7 +67,7 @@ func saveLinePng(cont *pdf.Content, mbox *pdf.Value, fileIdx int, pageIdx int) {
 	}
 	w := vg.Length(plt.X.Max/100) * vg.Inch
 	h := vg.Length(plt.Y.Max/100) * vg.Inch
-	pngName := fmt.Sprintf("file%v_page%v.png", fileIdx+1, pageIdx)
+	pngName := fmt.Sprintf("%v_page%v.png", removeExtension(filePath), pageIdx)
 	plt.Save(w, h, pngName)
 }
 
@@ -80,10 +81,16 @@ func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
 	plt.Add(l, s)
 }
 
+func removeExtension(filePath string) string {
+	fileName := filepath.Base(filePath)
+	extension := filepath.Ext(fileName)
+	return fileName[:len(fileName)-len(extension)]
+}
+
 func main() {
 	log := true
 	fileNames := []string{
-		"MEC報告書",
+		"こすも",
 		//"AVANT短信",
 		/*
 			"COSMO報告書",
@@ -102,7 +109,7 @@ func main() {
 	for i, fn := range fileNames {
 		wg.Add(1)
 		func(fn string, i int) { //go
-			docs[i] = parsePage(fn, i, log)
+			docs[i] = parsePage(fn, log)
 			wg.Done()
 		}(fn, i)
 	}
@@ -110,7 +117,7 @@ func main() {
 	js, _ := json.MarshalIndent(docs, "", "  ")
 	eTime := time.Now()
 	if log {
-		ioutil.WriteFile("docs.json", js, os.ModePerm)
+		ioutil.WriteFile("pdf_parsed.json", js, os.ModePerm)
 	}
 	fmt.Printf("%f秒\n", (eTime.Sub(sTime)).Seconds())
 }

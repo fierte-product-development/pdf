@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -22,8 +23,8 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePage(fileName string, fileIdx int, toStdout bool) []Content {
-	r, _ := Open(fileName)
+func parsePage(filePath string, toStdout bool) []Content {
+	r, _ := Open(filePath)
 	np := r.NumPage()
 	doc := make([]Content, np)
 	var wg sync.WaitGroup
@@ -34,7 +35,7 @@ func parsePage(fileName string, fileIdx int, toStdout bool) []Content {
 			cont := pg.Contents()
 			if !toStdout {
 				mb := pg.V.Key("MediaBox")
-				saveLinePng(&cont, &mb, fileIdx, i)
+				saveLinePng(&cont, &mb, filePath, i)
 			}
 			doc[i-1] = cont
 			wg.Done()
@@ -44,7 +45,7 @@ func parsePage(fileName string, fileIdx int, toStdout bool) []Content {
 	return doc
 }
 
-func saveLinePng(cont *Content, mbox *Value, fileIdx int, pageIdx int) {
+func saveLinePng(cont *Content, mbox *Value, filePath string, pageIdx int) {
 	plt, _ := plot.New()
 	plt.Add(plotter.NewGrid())
 	plt.X.Min = mbox.Index(0).Float64()
@@ -65,7 +66,7 @@ func saveLinePng(cont *Content, mbox *Value, fileIdx int, pageIdx int) {
 	}
 	w := vg.Length(plt.X.Max/100) * vg.Inch
 	h := vg.Length(plt.Y.Max/100) * vg.Inch
-	pngName := fmt.Sprintf("file%v_page%v.png", fileIdx+1, pageIdx)
+	pngName := fmt.Sprintf("%v_page%v.png", removeExtension(filePath), pageIdx)
 	plt.Save(w, h, pngName)
 }
 
@@ -79,15 +80,21 @@ func draw(plt *plot.Plot, points [4]float64, color int, dashes int) {
 	plt.Add(l, s)
 }
 
+func removeExtension(filePath string) string {
+	fileName := filepath.Base(filePath)
+	extension := filepath.Ext(fileName)
+	return fileName[:len(fileName)-len(extension)]
+}
+
 // JSON receives an array of paths and outputs array of content objects as JSON.
-func JSON(fileNames []string, toStdout bool) {
+func JSON(filePaths []string, toStdout bool) {
 	sTime := time.Now()
-	docs := make([][]Content, len(fileNames))
+	docs := make([][]Content, len(filePaths))
 	var wg sync.WaitGroup
-	for i, fn := range fileNames {
+	for i, fn := range filePaths {
 		wg.Add(1)
 		go func(fn string, i int) {
-			docs[i] = parsePage(fn, i, toStdout)
+			docs[i] = parsePage(fn, toStdout)
 			wg.Done()
 		}(fn, i)
 	}
