@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -12,9 +13,9 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 	var path []string
-	toStdout, err := strconv.ParseBool(args[0])
+	toFile, err := strconv.ParseBool(args[0])
 	if err != nil {
-		toStdout = false
+		toFile = true
 		path = args
 	} else {
 		path = args[1:]
@@ -22,5 +23,5 @@ func main() {
 	for i, p := range path {
 		path[i] = filepath.FromSlash(p)
 	}
-	pdf.JSON(path, toStdout)
+	os.Stdout.Write(pdf.JSON(path, toFile))
 }

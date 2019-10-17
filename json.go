@@ -3,8 +3,7 @@
 // license that can be found in the LICENSE file.
 
 // PDFファイルのパスの配列を受け取ってContentオブジェクトの配列をjsonで返す
-// toStdoutがtrueの場合jsonを標準出力に流す
-// falseの場合jsonファイルとついでにラインの解析結果をプロットしたpngファイルを出力する
+// toFileがTrueの場合jsonファイルとついでにラインの解析結果をプロットしたpngファイルを出力する
 
 package pdf
 
@@ -23,7 +22,7 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePage(filePath string, toStdout bool) []Content {
+func parsePage(filePath string, toFile bool) []Content {
 	r, _ := Open(filePath)
 	np := r.NumPage()
 	doc := make([]Content, np)
@@ -33,7 +32,7 @@ func parsePage(filePath string, toStdout bool) []Content {
 		go func(i int) {
 			pg := r.Page(i)
 			cont := pg.Contents()
-			if !toStdout {
+			if toFile {
 				mb := pg.V.Key("MediaBox")
 				saveLinePng(&cont, &mb, filePath, i)
 			}
@@ -86,26 +85,28 @@ func removeExtension(filePath string) string {
 	return fileName[:len(fileName)-len(extension)]
 }
 
-// JSON receives an array of paths and outputs array of content objects as JSON.
-func JSON(filePaths []string, toStdout bool) {
+// JSON receives an array of paths and return array of content objects as JSON.
+func JSON(filePaths []string, toFile bool) []byte {
 	sTime := time.Now()
 	docs := make([][]Content, len(filePaths))
 	var wg sync.WaitGroup
 	for i, fn := range filePaths {
 		wg.Add(1)
 		go func(fn string, i int) {
-			docs[i] = parsePage(fn, toStdout)
+			docs[i] = parsePage(fn, toFile)
 			wg.Done()
 		}(fn, i)
 	}
 	wg.Wait()
 	js, _ := json.MarshalIndent(docs, "", "  ")
-	if toStdout {
-		os.Stdout.Write(js)
-	} else {
+	var result []byte
+	if toFile {
 		ioutil.WriteFile("pdf_parsed.json", js, os.ModePerm)
 		eTime := time.Now()
 		time := eTime.Sub(sTime).Seconds()
-		fmt.Printf("complete. time: %fs\n", time)
+		result = []byte(fmt.Sprintf("complete. time: %fs\n", time))
+	} else {
+		result = js
 	}
+	return result
 }
