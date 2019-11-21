@@ -388,12 +388,6 @@ func nearlyEqual(x, y float64) bool {
 func isSeperated(x, y float64) bool {
 	return x+1.8 < y
 }
-func contains(t Text, min Point, max Point) bool {
-	return min.X < t.X &&
-		min.Y < t.Y &&
-		max.X > t.X &&
-		max.Y > t.Y
-}
 
 // A Text represents a single piece of text drawn on a page.
 type Text struct {
@@ -403,6 +397,13 @@ type Text struct {
 	Y        float64 // the Y coordinate, in points, increasing bottom to top
 	W        float64 // the width of the text, in points
 	S        string  // the actual UTF-8 text
+}
+
+func (t *Text) contained(min Point, max Point) bool {
+	return min.X < t.X &&
+		min.Y < t.Y &&
+		max.X > t.X &&
+		max.Y > t.Y
 }
 
 // A Line represents a line
@@ -652,7 +653,13 @@ type Content struct {
 }
 
 func (c *Content) len() int {
-	return len(c.Line) + len(c.Table) + len(c.Line)
+	return len(c.Text) + len(c.Table) + len(c.Line)
+}
+
+func (c *Content) append(cont *Content) {
+	c.Text = append(c.Text, cont.Text...)
+	c.Table = append(c.Table, cont.Table...)
+	c.Line = append(c.Line, cont.Line...)
 }
 
 type gstate struct {
@@ -693,18 +700,18 @@ func (p *Page) Contents() Content {
 	default:
 		println(val.Kind())
 	}
-	return getContentFromStream(p, vals)
-}
-
-func getContentFromStream(p *Page, streams []Value) Content {
-	result := Content{}
-	// 現在のグラフィックステート
-	var g = gstate{
+	// デフォルトのグラフィックステート
+	g := gstate{
 		CS:  true,
 		cs:  true,
 		Th:  1,
 		CTM: ident,
 	}
+	return getContentFromStream(p, vals, g)
+}
+
+func getContentFromStream(p *Page, streams []Value, g gstate) Content {
+	result := Content{}
 	// qオペレータなどでグラフィックステートを一時保存するためのスタック
 	var gstack []gstate
 
@@ -885,6 +892,26 @@ func getContentFromStream(p *Page, streams []Value) Content {
 						sum += arg.Float64()
 					}
 					g.CS = sum > 0
+				}
+
+			case "Do":
+				for _, arg := range args {
+					xobj := p.V.Key("Resources").Key("XObject").Key(arg.String()[1:])
+					xg := g
+					cm := xobj.Key("Matrix")
+					if !cm.IsNull() {
+						var m matrix
+						for i := 0; i < 6; i++ {
+							m[i/2][i%2] = cm.Index(i).Float64()
+						}
+						m[2][2] = 1
+						xg.CTM = m.mul(xg.CTM)
+					}
+					st := xobj.Key("Subtype")
+					if st.String() == "/Form" {
+						xcontent := getContentFromStream(p, []Value{xobj}, xg)
+						result.append(&xcontent)
+					}
 				}
 
 			case "cm": // update g.CTM
@@ -1073,9 +1100,9 @@ func getContentFromStream(p *Page, streams []Value) Content {
 	for _, t := range texts {
 		ok := false
 		for i, tb := range result.Table {
-			if contains(t, tb.Min, tb.Max) {
+			if t.contained(tb.Min, tb.Max) {
 				for j, c := range tb.Cell {
-					if contains(t, c.Min, c.Max) {
+					if t.contained(c.Min, c.Max) {
 						result.Table[i].Cell[j].Text = append(c.Text, t)
 						ok = true
 					}
