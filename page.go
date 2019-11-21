@@ -399,11 +399,11 @@ type Text struct {
 	S        string  // the actual UTF-8 text
 }
 
-func (t *Text) contained(min Point, max Point) bool {
-	return min.X < t.X &&
-		min.Y < t.Y &&
-		max.X > t.X &&
-		max.Y > t.Y
+func (t *Text) contained(mbox MediaBox) bool {
+	return mbox.Min.X < t.X &&
+		mbox.Min.Y < t.Y &&
+		mbox.Max.X > t.X &&
+		mbox.Max.Y > t.Y
 }
 
 // A Line represents a line
@@ -645,6 +645,36 @@ type Point struct {
 	Y float64
 }
 
+func (p *Point) contained(mbox MediaBox) bool {
+	return mbox.Min.X < p.X &&
+		mbox.Min.Y < p.Y &&
+		mbox.Max.X > p.X &&
+		mbox.Max.Y > p.Y
+}
+
+// A MediaBox is range where objects can be drawn.
+type MediaBox struct {
+	Min Point
+	Max Point
+}
+
+// NewMediaBox converts media box information of pdf to MediaBox structure.
+func NewMediaBox(mbox Value) *MediaBox {
+	mb := new(MediaBox)
+	mb.Min.X = mbox.Index(0).Float64()
+	mb.Min.Y = mbox.Index(1).Float64()
+	mb.Max.X = mbox.Index(2).Float64()
+	mb.Max.Y = mbox.Index(3).Float64()
+	return mb
+}
+
+func (mb *MediaBox) bool() bool {
+	return !(mb.Min.X == 0 &&
+		mb.Min.Y == 0 &&
+		mb.Max.X == 0 &&
+		mb.Max.Y == 0)
+}
+
 // Content describes the basic content on a page: the text and any drawn lines.
 type Content struct {
 	Text  []Text
@@ -716,6 +746,10 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	var gstack []gstate
 
 	var texts []Text
+	mbox := *NewMediaBox(parent.Key("MediaBox"))
+	if !mbox.bool() {
+		mbox = *NewMediaBox(parent.Key("BBox"))
+	}
 	showText := func(s string) {
 		n := 0
 		for _, ch := range g.Tfe.Decode(s) {
@@ -731,7 +765,10 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					// 文字コードを認識することが不可能なためそのまま表記
 					f = fmt.Sprintf("%X", f)
 				}
-				texts = append(texts, Text{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)})
+				text := Text{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)}
+				if text.contained(mbox) {
+					texts = append(texts, text)
+				}
 			}
 			tx := w0/1000*g.Tfs + g.Tc
 			if isSpace {
@@ -753,14 +790,13 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 			pstack = append(pstack, pstack[0])
 		}
 	}
-	minusPointCheck := func() bool {
-		hasMinus := false
+	containedAll := func() bool {
 		for _, p := range pstack {
-			if p.X < 0 || p.Y < 0 {
-				hasMinus = true
+			if !p.contained(mbox) {
+				return false
 			}
 		}
-		return !hasMinus
+		return true
 	}
 	pstackToLine := func() *Lines {
 		ls := new(Lines)
@@ -776,14 +812,14 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		return ls
 	}
 	stroke := func() {
-		if g.CS && minusPointCheck() {
+		if g.CS && containedAll() {
 			ls := pstackToLine()
 			lines.append(ls)
 		}
 	}
 	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
 	fill := func() {
-		if g.cs && minusPointCheck() {
+		if g.cs && containedAll() {
 			w := 1.8 // 線の太さ(数値は調整)
 			ls := pstackToLine()
 			ls.sortYX()
@@ -1100,9 +1136,9 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	for _, t := range texts {
 		ok := false
 		for i, tb := range result.Table {
-			if t.contained(tb.Min, tb.Max) {
+			if t.contained(MediaBox{tb.Min, tb.Max}) {
 				for j, c := range tb.Cell {
-					if t.contained(c.Min, c.Max) {
+					if t.contained(MediaBox{c.Min, c.Max}) {
 						result.Table[i].Cell[j].Text = append(c.Text, t)
 						ok = true
 					}
