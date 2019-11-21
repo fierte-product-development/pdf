@@ -707,10 +707,10 @@ func (p *Page) Contents() Content {
 		Th:  1,
 		CTM: ident,
 	}
-	return getContentFromStream(p, vals, g)
+	return getContentFromStream(&p.V, vals, g)
 }
 
-func getContentFromStream(p *Page, streams []Value, g gstate) Content {
+func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
 	// qオペレータなどでグラフィックステートを一時保存するためのスタック
 	var gstack []gstate
@@ -896,7 +896,7 @@ func getContentFromStream(p *Page, streams []Value, g gstate) Content {
 
 			case "Do":
 				for _, arg := range args {
-					xobj := p.V.Key("Resources").Key("XObject").Key(arg.String()[1:])
+					xobj := parent.Key("Resources").Key("XObject").Key(arg.String()[1:])
 					xg := g
 					cm := xobj.Key("Matrix")
 					if !cm.IsNull() {
@@ -909,7 +909,7 @@ func getContentFromStream(p *Page, streams []Value, g gstate) Content {
 					}
 					st := xobj.Key("Subtype")
 					if st.String() == "/Form" {
-						xcontent := getContentFromStream(p, []Value{xobj}, xg)
+						xcontent := getContentFromStream(&xobj, []Value{xobj}, xg)
 						result.append(&xcontent)
 					}
 				}
@@ -963,7 +963,7 @@ func getContentFromStream(p *Page, streams []Value, g gstate) Content {
 					panic("bad Tf")
 				}
 				f := args[0].Name()
-				g.Tf = p.Font(f)
+				g.Tf = Font{parent.Key("Resources").Key("Font").Key(f)}
 				if v, ok := encDict[f]; ok {
 					g.Tfe = v
 				} else {
