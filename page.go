@@ -6,6 +6,7 @@ package pdf
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math"
 	"os"
@@ -152,7 +153,7 @@ func (f Font) Encoder() TextEncoding {
 			toUnicode := f.V.Key("ToUnicode")
 			switch toUnicode.Kind() {
 			case Stream, Dict:
-				cm := readCmap(Interpreted{val: toUnicode})
+				cm := readCmap(toUnicode.Reader())
 				if cm == nil {
 					println("nil cmap", enc.Name())
 					return &nopEncoder{}
@@ -278,7 +279,7 @@ type bfrange struct {
 	dst string
 }
 
-func readCmap(toUnicode Interpreted) *cmap {
+func readCmap(toUnicode io.ReadCloser) *cmap {
 	n := -1
 	var m cmap
 	ok := true
@@ -296,7 +297,7 @@ func readCmap(toUnicode Interpreted) *cmap {
 			return ""
 		}
 	}
-	Interpret(toUnicode, func(stk *Stack, op string) {
+	Interpret(toUnicode, &Stack{}, func(stk *Stack, op string) {
 		if !ok {
 			return
 		}
@@ -742,8 +743,6 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
-	// qオペレータなどでグラフィックステートを一時保存するためのスタック
-	var gstack []gstate
 
 	var texts []Text
 	mbox := *NewMediaBox(parent.Key("MediaBox"))
@@ -830,8 +829,11 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	}
 
 	encDict := map[string]TextEncoding{}
+	// ページコンテンツがサイズで分割されている可能性があるため各スタックはループの外側で用意する
+	var argstack Stack
+	var gstack []gstate
 	for _, strm := range streams {
-		Interpret(Interpreted{val: strm}, func(stk *Stack, op string) {
+		Interpret(strm.Reader(), &argstack, func(stk *Stack, op string) {
 			n := stk.Len()
 			args := make([]Value, n)
 			for i := n - 1; i >= 0; i-- {
