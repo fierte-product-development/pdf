@@ -393,16 +393,16 @@ func isSeperated(x, y float64) bool {
 
 // A Text is List of Char.
 type Text struct {
-	char []*Char
+	Char []*Char
 	BoundingBox
 }
 
 func (t *Text) append(c *Char) {
-	if len(t.char) == 0 {
+	if len(t.Char) == 0 {
 		t.Min = Point{c.X, c.Y}
 		t.Max = Point{c.X + 10, c.Y + c.FontSize}
 	}
-	t.char = append(t.char, c)
+	t.Char = append(t.Char, c)
 	// 座標更新のくだり
 }
 
@@ -670,11 +670,11 @@ func NewBoundingBox(mbox Value) *BoundingBox {
 	return bbox
 }
 
-func (bbox *BoundingBox) bool() bool {
-	return !(bbox.Min.X == 0 &&
+func (bbox *BoundingBox) isEmpty() bool {
+	return bbox.Min.X == 0 &&
 		bbox.Min.Y == 0 &&
 		bbox.Max.X == 0 &&
-		bbox.Max.Y == 0)
+		bbox.Max.Y == 0
 }
 
 func (bbox *BoundingBox) contains(pts ...*Point) bool {
@@ -763,7 +763,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 
 	var texts []Text
 	mbox := *NewBoundingBox(parent.Key("MediaBox"))
-	if !mbox.bool() {
+	if mbox.isEmpty() {
 		mbox = *NewBoundingBox(parent.Key("BBox"))
 	}
 	showText := func(s string) {
@@ -784,7 +784,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					f = fmt.Sprintf("%X", f)
 				}
 				char := Char{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)}
-				text.append(&char)
+				text.append(*char)
 			}
 			tx := w0/1000*g.Tfs + g.Tc
 			if isSpace {
@@ -793,7 +793,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 			tx *= g.Th
 			g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
 		}
-		if mbox.contains(text.points()) {
+		if !text.isEmpty() && mbox.contains(text.points()) {
 			texts = append(texts, text)
 		}
 	}
