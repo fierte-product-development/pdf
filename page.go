@@ -784,7 +784,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					f = fmt.Sprintf("%X", f)
 				}
 				char := Char{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)}
-				text.append(*char)
+				text.append(&char)
 			}
 			tx := w0/1000*g.Tfs + g.Tc
 			if isSpace {
