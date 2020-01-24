@@ -90,7 +90,7 @@ func removeExtension(filePath string) string {
 func main() {
 	log := true
 	fileNames := []string{
-		"こすも",
+		"avant1",
 		//"AVANT短信",
 		/*
 			"COSMO報告書",

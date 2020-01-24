@@ -18,6 +18,7 @@ import (
 // The methods interpret a Page dictionary stored in V.
 type Page struct {
 	V Value
+	BoundingBox
 }
 
 // Page returns the page for the given page number.
@@ -46,7 +47,7 @@ Search:
 			}
 			if kid.Key("Type").Name() == "Page" {
 				if num == 0 {
-					return Page{kid}
+					return Page{V: kid}
 				}
 				num--
 			}
@@ -390,21 +391,29 @@ func isSeperated(x, y float64) bool {
 	return x+1.8 < y
 }
 
-// A Text represents a single piece of text drawn on a page.
+// A Text is List of Char.
 type Text struct {
+	char []*Char
+	BoundingBox
+}
+
+func (t *Text) append(c *Char) {
+	if len(t.char) == 0 {
+		t.Min = Point{c.X, c.Y}
+		t.Max = Point{c.X + 10, c.Y + c.FontSize}
+	}
+	t.char = append(t.char, c)
+	// 座標更新のくだり
+}
+
+// A Char represents a single piece of text drawn on a page.
+type Char struct {
 	Font     string  // the font used
 	FontSize float64 // the font size, in points (1/72 of an inch)
 	X        float64 // the X coordinate, in points, increasing left to right
 	Y        float64 // the Y coordinate, in points, increasing bottom to top
 	W        float64 // the width of the text, in points
 	S        string  // the actual UTF-8 text
-}
-
-func (t *Text) contained(mbox MediaBox) bool {
-	return mbox.Min.X < t.X &&
-		mbox.Min.Y < t.Y &&
-		mbox.Max.X > t.X &&
-		mbox.Max.Y > t.Y
 }
 
 // A Line represents a line
@@ -580,16 +589,14 @@ func (ls *Lines) appendNewLine() {
 
 // A Cell represents a range surrounded by a Line
 type Cell struct {
-	Min  Point
-	Max  Point
 	Text []Text
+	BoundingBox
 }
 
 // Table is a collection of Cell
 type Table struct {
-	Min  Point
-	Max  Point
 	Cell []Cell
+	BoundingBox
 }
 
 // NewTable constructs a Table from Lines
@@ -625,9 +632,10 @@ func NewTable(ls Lines) *Table {
 			}
 			if hBottom.Type != "nil" {
 				t.Cell = append(t.Cell, Cell{
-					Min: Point{vLeft.Fix, hBottom.Fix},
-					Max: Point{vRight.Fix, hTop.Fix},
-				})
+					BoundingBox: BoundingBox{
+						Point{vLeft.Fix, hBottom.Fix},
+						Point{vRight.Fix, hTop.Fix},
+					}})
 				vLeft = vRight
 			}
 		}
@@ -646,34 +654,43 @@ type Point struct {
 	Y float64
 }
 
-func (p *Point) contained(mbox MediaBox) bool {
-	return mbox.Min.X < p.X &&
-		mbox.Min.Y < p.Y &&
-		mbox.Max.X > p.X &&
-		mbox.Max.Y > p.Y
-}
-
-// A MediaBox is range where objects can be drawn.
-type MediaBox struct {
+// A BoundingBox is range where objects can be drawn.
+type BoundingBox struct {
 	Min Point
 	Max Point
 }
 
-// NewMediaBox converts media box information of pdf to MediaBox structure.
-func NewMediaBox(mbox Value) *MediaBox {
-	mb := new(MediaBox)
-	mb.Min.X = mbox.Index(0).Float64()
-	mb.Min.Y = mbox.Index(1).Float64()
-	mb.Max.X = mbox.Index(2).Float64()
-	mb.Max.Y = mbox.Index(3).Float64()
-	return mb
+// NewBoundingBox converts media box information of pdf to BoundingBox structure.
+func NewBoundingBox(mbox Value) *BoundingBox {
+	bbox := new(BoundingBox)
+	bbox.Min.X = mbox.Index(0).Float64()
+	bbox.Min.Y = mbox.Index(1).Float64()
+	bbox.Max.X = mbox.Index(2).Float64()
+	bbox.Max.Y = mbox.Index(3).Float64()
+	return bbox
 }
 
-func (mb *MediaBox) bool() bool {
-	return !(mb.Min.X == 0 &&
-		mb.Min.Y == 0 &&
-		mb.Max.X == 0 &&
-		mb.Max.Y == 0)
+func (bbox *BoundingBox) bool() bool {
+	return !(bbox.Min.X == 0 &&
+		bbox.Min.Y == 0 &&
+		bbox.Max.X == 0 &&
+		bbox.Max.Y == 0)
+}
+
+func (bbox *BoundingBox) contains(pts ...*Point) bool {
+	for _, pt := range pts {
+		if bbox.Min.X > pt.X ||
+			bbox.Min.Y > pt.Y ||
+			bbox.Max.X < pt.X ||
+			bbox.Max.Y < pt.Y {
+			return false
+		}
+	}
+	return true
+}
+
+func (bbox *BoundingBox) points() (*Point, *Point) {
+	return &bbox.Min, &bbox.Max
 }
 
 // Content describes the basic content on a page: the text and any drawn lines.
@@ -702,7 +719,6 @@ type gstate struct {
 	Tl    float64
 	Tf    Font
 	Tfs   float64
-	Tfe   TextEncoding // 存在しないオペレータだが毎回Fontからエンコーディングを抽出すると遅いので追加
 	Tmode int
 	Trise float64
 	Tm    matrix
@@ -743,15 +759,18 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
+	encDict := map[string]TextEncoding{}
 
 	var texts []Text
-	mbox := *NewMediaBox(parent.Key("MediaBox"))
+	mbox := *NewBoundingBox(parent.Key("MediaBox"))
 	if !mbox.bool() {
-		mbox = *NewMediaBox(parent.Key("BBox"))
+		mbox = *NewBoundingBox(parent.Key("BBox"))
 	}
 	showText := func(s string) {
 		n := 0
-		for _, ch := range g.Tfe.Decode(s) {
+		fname := g.Tf.BaseFont()
+		text := Text{}
+		for _, ch := range encDict[fname].Decode(s) {
 			Trm := matrix{{g.Tfs * g.Th, 0, 0}, {0, g.Tfs, 0}, {0, g.Trise, 1}}.mul(g.Tm).mul(g.CTM)
 			w0 := g.Tf.Width(int(s[n]))
 			n++
@@ -764,10 +783,8 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					// 文字コードを認識することが不可能なためそのまま表記
 					f = fmt.Sprintf("%X", f)
 				}
-				text := Text{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)}
-				if text.contained(mbox) {
-					texts = append(texts, text)
-				}
+				char := Char{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)}
+				text.append(&char)
 			}
 			tx := w0/1000*g.Tfs + g.Tc
 			if isSpace {
@@ -775,6 +792,9 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 			}
 			tx *= g.Th
 			g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
+		}
+		if mbox.contains(text.points()) {
+			texts = append(texts, text)
 		}
 	}
 
@@ -791,7 +811,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	}
 	containedAll := func() bool {
 		for _, p := range pstack {
-			if !p.contained(mbox) {
+			if !mbox.contains(&p) {
 				return false
 			}
 		}
@@ -828,7 +848,6 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		}
 	}
 
-	encDict := map[string]TextEncoding{}
 	// ページコンテンツがサイズで分割されている可能性があるため各スタックはループの外側で用意する
 	var argstack Stack
 	var gstack []gstate
@@ -1002,15 +1021,9 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				}
 				f := args[0].Name()
 				g.Tf = Font{parent.Key("Resources").Key("Font").Key(f)}
-				if v, ok := encDict[f]; ok {
-					g.Tfe = v
-				} else {
-					g.Tfe = g.Tf.Encoder()
-					encDict[f] = g.Tfe
-				}
-				if g.Tfe == nil {
-					println("no cmap for", f)
-					g.Tfe = &nopEncoder{}
+				fname := g.Tf.BaseFont()
+				if _, ok := encDict[fname]; !ok {
+					encDict[fname] = g.Tf.Encoder()
 				}
 				g.Tfs = args[1].Float64()
 
@@ -1128,19 +1141,19 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	//テキストをテーブルに割り当て
 	sort.SliceStable(texts, func(i, j int) bool {
 		p, q, ok := texts[i], texts[j], false
-		if p.Y == q.Y {
-			ok = p.X < q.X
+		if p.Min.Y == q.Min.Y {
+			ok = p.Min.X < q.Min.X
 		} else {
-			ok = p.Y > q.Y
+			ok = p.Min.Y > q.Min.Y
 		}
 		return ok
 	})
 	for _, t := range texts {
 		ok := false
 		for i, tb := range result.Table {
-			if t.contained(MediaBox{tb.Min, tb.Max}) {
+			if tb.contains(t.points()) {
 				for j, c := range tb.Cell {
-					if t.contained(MediaBox{c.Min, c.Max}) {
+					if c.contains(t.points()) {
 						result.Table[i].Cell[j].Text = append(c.Text, t)
 						ok = true
 					}
@@ -1162,28 +1175,28 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 // and then left to right within a line.
 type TextVertical []Text
 
-func (x TextVertical) Len() int      { return len(x) }
-func (x TextVertical) Swap(i, j int) { x[i], x[j] = x[j], x[i] }
-func (x TextVertical) Less(i, j int) bool {
-	if x[i].Y != x[j].Y {
-		return x[i].Y > x[j].Y
-	}
-	return x[i].X < x[j].X
-}
+// func (x TextVertical) Len() int      { return len(x) }
+// func (x TextVertical) Swap(i, j int) { x[i], x[j] = x[j], x[i] }
+// func (x TextVertical) Less(i, j int) bool {
+// 	if x[i].Y != x[j].Y {
+// 		return x[i].Y > x[j].Y
+// 	}
+// 	return x[i].X < x[j].X
+// }
 
 // TextHorizontal implements sort.Interface for sorting
 // a slice of Text values in horizontal order, left to right,
 // and then top to bottom within a column.
 type TextHorizontal []Text
 
-func (x TextHorizontal) Len() int      { return len(x) }
-func (x TextHorizontal) Swap(i, j int) { x[i], x[j] = x[j], x[i] }
-func (x TextHorizontal) Less(i, j int) bool {
-	if x[i].X != x[j].X {
-		return x[i].X < x[j].X
-	}
-	return x[i].Y > x[j].Y
-}
+// func (x TextHorizontal) Len() int      { return len(x) }
+// func (x TextHorizontal) Swap(i, j int) { x[i], x[j] = x[j], x[i] }
+// func (x TextHorizontal) Less(i, j int) bool {
+// 	if x[i].X != x[j].X {
+// 		return x[i].X < x[j].X
+// 	}
+// 	return x[i].Y > x[j].Y
+// }
 
 // An Outline is a tree describing the outline (also known as the table of contents)
 // of a document.
