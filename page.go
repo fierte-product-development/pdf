@@ -693,6 +693,28 @@ func (bbox *BoundingBox) points() (*Point, *Point) {
 	return &bbox.Min, &bbox.Max
 }
 
+type FontInfo struct {
+	Name    string
+	Type    string
+	Encoder TextEncoding
+}
+
+func NewFontInfo(f *Font) *FontInfo {
+	fi := new(FontInfo)
+	switch st := f.V.Key("Subtype").Name(); st {
+	case "TrueType", "Type1":
+		fi.Type = st
+		fi.Name = f.BaseFont()
+	case "Type0":
+		fi.Type = f.V.Key("DescendantFonts").Index(0).Key("Subtype").Name()
+		fi.Name = f.BaseFont()
+	default:
+		println("Unknown Font")
+	}
+	fi.Encoder = f.Encoder()
+	return fi
+}
+
 // Content describes the basic content on a page: the text and any drawn lines.
 type Content struct {
 	Text  []Text
@@ -759,7 +781,7 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
-	encDict := map[string]TextEncoding{}
+	fontInfos := map[*Font]*FontInfo{}
 
 	var texts []Text
 	mbox := *NewBoundingBox(parent.Key("MediaBox"))
@@ -768,9 +790,8 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	}
 	showText := func(s string) {
 		n := 0
-		fname := g.Tf.BaseFont()
 		text := Text{}
-		for _, ch := range encDict[fname].Decode(s) {
+		for _, ch := range fontInfos[&g.Tf].Encoder.Decode(s) {
 			Trm := matrix{{g.Tfs * g.Th, 0, 0}, {0, g.Tfs, 0}, {0, g.Trise, 1}}.mul(g.Tm).mul(g.CTM)
 			w0 := g.Tf.Width(int(s[n]))
 			n++
@@ -1021,9 +1042,8 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				}
 				f := args[0].Name()
 				g.Tf = Font{parent.Key("Resources").Key("Font").Key(f)}
-				fname := g.Tf.BaseFont()
-				if _, ok := encDict[fname]; !ok {
-					encDict[fname] = g.Tf.Encoder()
+				if _, ok := fontInfos[&g.Tf]; !ok {
+					fontInfos[&g.Tf] = NewFontInfo(&g.Tf)
 				}
 				g.Tfs = args[1].Float64()
 
