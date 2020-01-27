@@ -18,7 +18,6 @@ import (
 // The methods interpret a Page dictionary stored in V.
 type Page struct {
 	V Value
-	BoundingBox
 }
 
 // Page returns the page for the given page number.
@@ -435,7 +434,7 @@ type Line struct {
 }
 
 // NewLine constructs a Line
-func NewLine(pt ...Point) *Line {
+func NewLine(pt ...*Point) *Line {
 	l := new(Line)
 	setDefault := func() {
 		l.Type = "nil"
@@ -703,6 +702,7 @@ func (bbox *BoundingBox) points() (*Point, *Point) {
 	return &bbox.Min, &bbox.Max
 }
 
+// A FontInfos is Font information that you want to get only once.
 type FontInfos struct {
 	Name    string
 	Encoder TextEncoding
@@ -711,6 +711,7 @@ type FontInfos struct {
 	Bytes   int
 }
 
+// CreateText creates a Text object from a string(Tj or TJ argument).
 func (fi *FontInfos) CreateText(s string, g *gstate) Text {
 	cid := fi.charID(s)
 	text := Text{}
@@ -763,19 +764,23 @@ func (fi *FontInfos) charID(s string) []int {
 	return charIDs
 }
 
+// A FontInfo interface is used in combination with FontInfos.
 type FontInfo interface {
 	setWidth(*Font)
 	getFontInfos() FontInfos
 }
 
+// A Type1Font is a ASCII font.
 type Type1Font struct {
 	FontInfos
 }
 
+// A Type0Font is mainly used for Japanese fonts.
 type Type0Font struct {
 	FontInfos
 }
 
+// NewFontInfo is the constructor of FontInfo. Processing branches depending on the value of "Subtype".
 func NewFontInfo(f *Font) FontInfo {
 	var fi FontInfo
 	switch st := f.V.Key("Subtype").Name(); st {
@@ -789,6 +794,7 @@ func NewFontInfo(f *Font) FontInfo {
 	return fi
 }
 
+// NewType1Font is called by NewFontInfo.
 func NewType1Font(f *Font) *Type1Font {
 	fi := new(Type1Font)
 	fi.Name = f.BaseFont()
@@ -814,6 +820,7 @@ func (tp1 *Type1Font) getFontInfos() FontInfos {
 	return tp1.FontInfos
 }
 
+// NewType0Font is called by NewFontInfo.
 func NewType0Font(f *Font) *Type0Font {
 	fi := new(Type0Font)
 	fi.Name = f.BaseFont()
@@ -942,7 +949,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		}
 	}
 
-	var pstack []Point
+	var pstack []*Point
 	var lines Lines
 	closePath := func() {
 		l := len(pstack)
@@ -952,14 +959,6 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		if pstack[0] != pstack[l-1] {
 			pstack = append(pstack, pstack[0])
 		}
-	}
-	containedAll := func() bool {
-		for _, p := range pstack {
-			if !mbox.contains(&p) {
-				return false
-			}
-		}
-		return true
 	}
 	pstackToLine := func() *Lines {
 		ls := new(Lines)
@@ -975,14 +974,14 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		return ls
 	}
 	stroke := func() {
-		if g.CS && containedAll() {
+		if g.CS && mbox.contains(pstack...) {
 			ls := pstackToLine()
 			lines.append(ls)
 		}
 	}
 	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
 	fill := func() {
-		if g.cs && containedAll() {
+		if g.cs && mbox.contains(pstack...) {
 			w := 1.8 // 線の太さ(数値は調整)
 			ls := pstackToLine()
 			ls.sortYX()
@@ -1028,19 +1027,19 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 2 {
 					panic("bad l or m")
 				}
-				pstack = append(pstack, Point{args[0].Float64(), args[1].Float64()})
+				pstack = append(pstack, &Point{args[0].Float64(), args[1].Float64()})
 			case "re": // 四角形のパスを生成
 				if len(args) != 4 {
 					panic("bad re")
 				}
 				x, y := args[0].Float64(), args[1].Float64()
 				w, h := args[2].Float64(), args[3].Float64()
-				points := []Point{
-					Point{x, y + h},
-					Point{x + w, y + h},
-					Point{x + w, y},
-					Point{x, y},
-					Point{x, y + h},
+				points := []*Point{
+					&Point{x, y + h},
+					&Point{x + w, y + h},
+					&Point{x + w, y},
+					&Point{x, y},
+					&Point{x, y + h},
 				}
 				pstack = append(pstack, points...)
 
@@ -1060,7 +1059,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					case "b", "b*", "B", "B*", "S", "s":
 						stroke()
 					}
-					pstack = []Point{}
+					pstack = []*Point{}
 				}
 
 			case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
