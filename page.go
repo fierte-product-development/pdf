@@ -693,26 +693,155 @@ func (bbox *BoundingBox) points() (*Point, *Point) {
 	return &bbox.Min, &bbox.Max
 }
 
-type FontInfo struct {
+type FontInfos struct {
 	Name    string
-	Type    string
 	Encoder TextEncoding
+	Width   map[int]float64
+	DWidth  float64 // Default
+	Bytes   int
 }
 
-func NewFontInfo(f *Font) *FontInfo {
-	fi := new(FontInfo)
+func (fi *FontInfos) CreateText(s string, g *gstate) Text {
+	cid := fi.charID(s)
+	text := Text{}
+
+	n := 0
+	for _, ch := range fi.Encoder.Decode(s) {
+		Trm := matrix{{g.Tfs * g.Th, 0, 0}, {0, g.Tfs, 0}, {0, g.Trise, 1}}.mul(g.Tm).mul(g.CTM)
+		w0 := fi.Width[cid[n]]
+		if w0 == 0 {
+			w0 = fi.DWidth
+		}
+		isSpace := strings.TrimSpace(string(ch)) == ""
+		if !isSpace {
+			char := Char{fi.Name, Trm[0][0], Trm[2][0], Trm[2][1], w0 / fi.DWidth * Trm[0][0], string(ch)}
+			text.append(&char)
+		}
+		tx := w0/fi.DWidth*g.Tfs + g.Tc
+		if isSpace {
+			tx += g.Tw
+		}
+		tx *= g.Th
+		g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
+		n++
+	}
+	return text
+}
+
+func (fi *FontInfos) charID(s string) []int {
+	runes := []rune(s)
+	charIDs := []int{}
+	buf := 0
+	for i, r := range runes {
+		if (i+1)%fi.Bytes == 0 {
+			charIDs = append(charIDs, buf+int(r))
+			buf = 0
+		} else {
+			buf2 := int(r)
+			for c := 1; c <= (fi.Bytes - (i + 1)); c++ {
+				buf2 *= 256
+			}
+			buf += buf2
+		}
+	}
+	return charIDs
+}
+
+type FontInfo interface {
+	setWidth(*Font)
+	getFontInfos() FontInfos
+}
+
+type Type1Font struct {
+	FontInfos
+}
+
+type Type0Font struct {
+	FontInfos
+}
+
+func NewFontInfo(f *Font) FontInfo {
+	var fi FontInfo
 	switch st := f.V.Key("Subtype").Name(); st {
 	case "TrueType", "Type1":
-		fi.Type = st
-		fi.Name = f.BaseFont()
+		fi = NewType1Font(f)
 	case "Type0":
-		fi.Type = f.V.Key("DescendantFonts").Index(0).Key("Subtype").Name()
-		fi.Name = f.BaseFont()
+		fi = NewType0Font(f)
 	default:
 		println("Unknown Font")
 	}
-	fi.Encoder = f.Encoder()
 	return fi
+}
+
+func NewType1Font(f *Font) *Type1Font {
+	fi := new(Type1Font)
+	fi.Name = f.BaseFont()
+	fi.Encoder = f.Encoder()
+	fi.Bytes = 1
+	fi.setWidth(f)
+	return fi
+}
+
+func (tp1 *Type1Font) setWidth(f *Font) {
+	widthsMap := map[int]float64{}
+	first := f.FirstChar()
+	last := f.LastChar()
+	widths := f.V.Key("Widths")
+	for i := 0; i <= (last - first); i++ {
+		widthsMap[first+i] = widths.Index(i).Float64()
+	}
+	tp1.Width = widthsMap
+	tp1.DWidth = .1000
+}
+
+func (tp1 *Type1Font) getFontInfos() FontInfos {
+	return tp1.FontInfos
+}
+
+func NewType0Font(f *Font) *Type0Font {
+	fi := new(Type0Font)
+	fi.Name = f.BaseFont()
+	fi.Encoder = f.Encoder()
+	fi.Bytes = 2
+	fi.setWidth(f)
+	return fi
+}
+
+func (tp0 *Type0Font) setWidth(f *Font) {
+	widthsMap := map[int]float64{}
+	df := f.V.Key("DescendantFonts").Index(0)
+	widths := df.Key("W")
+	entryIdx := 1
+	first := 0
+	last := 0
+	for i := 0; i < widths.Len(); i++ {
+		if entryIdx == 1 {
+			first = int(widths.Index(i).Int64())
+			entryIdx++
+		} else if entryIdx == 2 {
+			if secondEntry := widths.Index(i); secondEntry.Kind() == Array {
+				for j := 0; j < secondEntry.Len(); j++ {
+					widthsMap[first+j] = secondEntry.Index(j).Float64()
+				}
+				entryIdx = 1 // all done
+			} else {
+				last = int(secondEntry.Int64())
+				entryIdx++
+			}
+		} else if entryIdx == 3 {
+			val := widths.Index(i).Float64()
+			for c := first; c <= last; c++ {
+				widthsMap[c] = val
+			}
+			entryIdx = 1 // all done
+		}
+	}
+	tp0.Width = widthsMap
+	tp0.DWidth = df.Key("DW").Float64()
+}
+
+func (tp0 *Type0Font) getFontInfos() FontInfos {
+	return tp0.FontInfos
 }
 
 // Content describes the basic content on a page: the text and any drawn lines.
@@ -781,7 +910,7 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
-	fontInfos := map[*Font]*FontInfo{}
+	fontInfos := map[*Font]FontInfo{}
 
 	var texts []Text
 	mbox := *NewBoundingBox(parent.Key("MediaBox"))
@@ -789,31 +918,8 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		mbox = *NewBoundingBox(parent.Key("BBox"))
 	}
 	showText := func(s string) {
-		n := 0
-		text := Text{}
-		for _, ch := range fontInfos[&g.Tf].Encoder.Decode(s) {
-			Trm := matrix{{g.Tfs * g.Th, 0, 0}, {0, g.Tfs, 0}, {0, g.Trise, 1}}.mul(g.Tm).mul(g.CTM)
-			w0 := g.Tf.Width(int(s[n]))
-			n++
-			isSpace := strings.TrimSpace(string(ch)) == ""
-			if !isSpace {
-				f := g.Tf.BaseFont()
-				if i := strings.Index(f, "+"); i >= 0 {
-					f = f[i+1:]
-				} else {
-					// 文字コードを認識することが不可能なためそのまま表記
-					f = fmt.Sprintf("%X", f)
-				}
-				char := Char{f, Trm[0][0], Trm[2][0], Trm[2][1], w0 / 1000 * Trm[0][0], string(ch)}
-				text.append(&char)
-			}
-			tx := w0/1000*g.Tfs + g.Tc
-			if isSpace {
-				tx += g.Tw
-			}
-			tx *= g.Th
-			g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
-		}
+		fi := fontInfos[&g.Tf].getFontInfos()
+		text := fi.CreateText(s, &g)
 		if !text.isEmpty() && mbox.contains(text.points()) {
 			texts = append(texts, text)
 		}
