@@ -50,27 +50,22 @@ func cleanPdfText(raw []byte) []byte {
 
 func cleanTexts(ts []pdf.Text) []pdf.Text {
 	var cleanedTexts []pdf.Text
-	for i, t := range ts {
-		cleanedTexts = append(cleanedTexts, pdf.Text{BoundingBox: t.BoundingBox})
+	for _, t := range ts {
+		cleanedTexts = append(cleanedTexts, t)
 		for _, c := range t.Char {
 			switch c.S {
 			// ハイフンっぽい文字を揃える
 			case "–", "―", "−":
-				ct := c
-				ct.S = "－"
-				cleanedTexts[i].Char = append(cleanedTexts[i].Char, ct)
+				c.S = "－"
 			// 全角の点を半角に
 			case "・":
-				ct := c
-				ct.S = "･"
-				cleanedTexts[i].Char = append(cleanedTexts[i].Char, ct)
+				c.S = "･"
 			// カンマは消す
 			case ",":
+				c.S = ""
 			// カタカナ以外を半角にする
 			default:
-				ct := c
-				ct.S = width.Fold.String(c.S)
-				cleanedTexts[i].Char = append(cleanedTexts[i].Char, ct)
+				c.S = width.Fold.String(c.S)
 			}
 		}
 	}
