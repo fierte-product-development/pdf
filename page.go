@@ -399,21 +399,31 @@ type Text struct {
 
 func (t *Text) append(c *Char) {
 	if len(t.Char) == 0 {
-		t.Min = Point{c.X, c.Y}
-		t.Max = Point{c.X + 10, c.Y + c.FontSize}
+		t.Min = c.Min
+		t.Max = c.Max
+	} else {
+		if t.Min.X > c.Min.X {
+			t.Min.X = c.Min.X
+		}
+		if t.Min.Y > c.Min.Y {
+			t.Min.Y = c.Min.Y
+		}
+		if t.Max.X < c.Max.X {
+			t.Max.X = c.Max.X
+		}
+		if t.Max.Y < c.Max.Y {
+			t.Max.Y = c.Max.Y
+		}
 	}
 	t.Char = append(t.Char, c)
-	// 座標更新のくだり
 }
 
 // A Char represents a single piece of text drawn on a page.
 type Char struct {
 	Font     string  // the font used
 	FontSize float64 // the font size, in points (1/72 of an inch)
-	X        float64 // the X coordinate, in points, increasing left to right
-	Y        float64 // the Y coordinate, in points, increasing bottom to top
-	W        float64 // the width of the text, in points
 	S        string  // the actual UTF-8 text
+	BoundingBox
 }
 
 // A Line represents a line
@@ -714,7 +724,13 @@ func (fi *FontInfos) CreateText(s string, g *gstate) Text {
 		}
 		isSpace := strings.TrimSpace(string(ch)) == ""
 		if !isSpace {
-			char := Char{fi.Name, Trm[0][0], Trm[2][0], Trm[2][1], w0 / fi.DWidth * Trm[0][0], string(ch)}
+			char := Char{
+				fi.Name, Trm[0][0], string(ch),
+				BoundingBox{
+					Point{Trm[2][0], Trm[2][1]},
+					Point{Trm[2][0] + (w0 / fi.DWidth * Trm[0][0]), Trm[2][1] + Trm[1][1]},
+				},
+			}
 			text.append(&char)
 		}
 		tx := w0/fi.DWidth*g.Tfs + g.Tc
@@ -1183,7 +1199,8 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					if x.Kind() == String {
 						showText(x.RawString())
 					} else {
-						tx := -x.Float64() / 1000 * g.Tfs * g.Th
+						fi := fontInfos[fontName].getFontInfos()
+						tx := -x.Float64() / fi.DWidth * g.Tfs * g.Th
 						g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
 					}
 				}
