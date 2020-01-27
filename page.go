@@ -910,7 +910,8 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
-	fontInfos := map[*Font]FontInfo{}
+	fontName := ""
+	fontInfos := map[string]FontInfo{}
 
 	var texts []Text
 	mbox := *NewBoundingBox(parent.Key("MediaBox"))
@@ -918,7 +919,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		mbox = *NewBoundingBox(parent.Key("BBox"))
 	}
 	showText := func(s string) {
-		fi := fontInfos[&g.Tf].getFontInfos()
+		fi := fontInfos[fontName].getFontInfos()
 		text := fi.CreateText(s, &g)
 		if !text.isEmpty() && mbox.contains(text.points()) {
 			texts = append(texts, text)
@@ -1146,10 +1147,10 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 2 {
 					panic("bad Tf")
 				}
-				f := args[0].Name()
-				g.Tf = Font{parent.Key("Resources").Key("Font").Key(f)}
-				if _, ok := fontInfos[&g.Tf]; !ok {
-					fontInfos[&g.Tf] = NewFontInfo(&g.Tf)
+				fontName = args[0].Name()
+				g.Tf = Font{parent.Key("Resources").Key("Font").Key(fontName)}
+				if _, ok := fontInfos[fontName]; !ok {
+					fontInfos[fontName] = NewFontInfo(&g.Tf)
 				}
 				g.Tfs = args[1].Float64()
 
