@@ -1028,12 +1028,15 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 2 {
 					panic("bad l or m")
 				}
-				pstack = append(pstack, &Point{args[0].Float64(), args[1].Float64()})
+				pstack = append(pstack, &Point{
+					args[0].Float64() + g.CTM[2][0],
+					args[1].Float64() + g.CTM[2][1],
+				})
 			case "re": // 四角形のパスを生成
 				if len(args) != 4 {
 					panic("bad re")
 				}
-				x, y := args[0].Float64(), args[1].Float64()
+				x, y := args[0].Float64()+g.CTM[2][0], args[1].Float64()+g.CTM[2][1]
 				w, h := args[2].Float64(), args[3].Float64()
 				points := []*Point{
 					&Point{x, y + h},
@@ -1064,13 +1067,11 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				}
 
 			case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
-				/* 今のところ使用しないためコメントアウト
-				gs := p.Resources().Key("ExtGState").Key(args[0].Name())
-				if gs.Kind() == Dict {
-					fmt.Println(gs.Key("CA")) // ストロークの透明度
-					fmt.Println(gs.Key("ca")) // 塗りつぶしの透明度
+				gs := parent.Key("Resources").Key("ExtGState").Key(args[0].Name())
+				font := gs.Key("Font")
+				if !font.IsNull() {
+					fmt.Fprint(os.Stderr, "ExtGState's Font operator is not implemented.")
 				}
-				*/
 
 			// 塗りつぶしおよびストロークの色設定。0でなければ全て描画するためtrue
 			case "cs", "CS":
@@ -1120,8 +1121,13 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					panic("bad g.Tm")
 				}
 				var m matrix
+				abcdef := [6]float64{}
 				for i := 0; i < 6; i++ {
-					m[i/2][i%2] = args[i].Float64()
+					abcdef[i] = args[i].Float64()
+					m[i/2][i%2] = abcdef[i]
+				}
+				if !(abcdef[0] == 1 && abcdef[1] == 0 && abcdef[2] == 0 && abcdef[3] == 1) {
+					fmt.Fprintf(os.Stderr, "Coordinate system is not implemented except for movement. %v\n", abcdef)
 				}
 				m[2][2] = 1
 				g.CTM = m.mul(g.CTM)
