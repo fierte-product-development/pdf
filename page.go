@@ -891,7 +891,7 @@ type gstate struct {
 	Tw    float64
 	Th    float64
 	Tl    float64
-	Tf    Font
+	Tf    string
 	Tfs   float64
 	Tmode int
 	Trise float64
@@ -933,7 +933,6 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
-	fontName := ""
 	fontInfos := map[string]FontInfo{}
 
 	var texts []Text
@@ -942,7 +941,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		mbox = *NewBoundingBox(parent.Key("BBox"))
 	}
 	showText := func(s string) {
-		fi := fontInfos[fontName].getFontInfos()
+		fi := fontInfos[g.Tf].getFontInfos()
 		text := fi.CreateText(s, &g)
 		if !text.isEmpty() && mbox.contains(text.points()) {
 			texts = append(texts, text)
@@ -1162,10 +1161,9 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 2 {
 					panic("bad Tf")
 				}
-				fontName = args[0].Name()
-				g.Tf = Font{parent.Key("Resources").Key("Font").Key(fontName)}
-				if _, ok := fontInfos[fontName]; !ok {
-					fontInfos[fontName] = NewFontInfo(&g.Tf)
+				g.Tf = args[0].Name()
+				if _, ok := fontInfos[g.Tf]; !ok {
+					fontInfos[g.Tf] = NewFontInfo(&Font{parent.Key("Resources").Key("Font").Key(g.Tf)})
 				}
 				g.Tfs = args[1].Float64()
 
@@ -1198,7 +1196,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					if x.Kind() == String {
 						showText(x.RawString())
 					} else {
-						fi := fontInfos[fontName].getFontInfos()
+						fi := fontInfos[g.Tf].getFontInfos()
 						tx := -x.Float64() / fi.DWidth * g.Tfs * g.Th
 						g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
 					}
