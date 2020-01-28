@@ -746,16 +746,18 @@ func (fi *FontInfos) CreateText(s string, g *gstate) Text {
 }
 
 func (fi *FontInfos) charID(s string) []int {
-	runes := []rune(s)
+	// TODO: TextEncoderのDecodeから取得したい
+	bytes := []byte(s)
 	charIDs := []int{}
 	buf := 0
-	for i, r := range runes {
-		if (i+1)%fi.Bytes == 0 {
+	for i, r := range bytes {
+		mod := (i + 1) % fi.Bytes
+		if mod == 0 {
 			charIDs = append(charIDs, buf+int(r))
 			buf = 0
 		} else {
 			buf2 := int(r)
-			for c := 1; c <= (fi.Bytes - (i + 1)); c++ {
+			for c := 0; c < (fi.Bytes - mod); c++ {
 				buf2 *= 256
 			}
 			buf += buf2
@@ -1365,4 +1367,15 @@ func buildOutline(entry Value) Outline {
 func printStream(val Value) {
 	bt, _ := ioutil.ReadAll(val.Reader())
 	fmt.Printf("%v\n", string(bt))
+}
+
+func printFont(f *Font) {
+	fmt.Printf("%v\n", f.V.Key("BaseFont"))
+	fmt.Printf("%v\n", f.V.Keys())
+	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Len())
+	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Keys())
+	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("CIDSystemInfo").Keys())
+	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("FontDescriptor").Keys())
+	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("FontDescriptor").Key("Flags"))
+	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("W"))
 }
