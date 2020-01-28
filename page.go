@@ -1258,6 +1258,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	lines.marge()
 	lines.sortYX()
 	lines.appendNewLine()
+	// result.Line = append(lines.h, lines.v...)
 
 	// 線をテーブルごとに振り分け
 	// TODO 振り分けのロジックを表が横並びの場合にも対応させる必要があるかも
@@ -1278,7 +1279,12 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				ls.h = append(ls.h, lines.h[hc])
 				hc++
 			}
-			tableMatl = append(tableMatl, ls)
+			if len(ls.h) == 1 || len(ls.v) == 1 {
+				result.Line = append(result.Line, ls.v...)
+				result.Line = append(result.Line, ls.h...)
+			} else {
+				tableMatl = append(tableMatl, ls)
+			}
 		}
 	}
 
