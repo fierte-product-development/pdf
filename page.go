@@ -1257,38 +1257,59 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 
 	lines.marge()
 	lines.sortYX()
-	lines.appendNewLine()
 	// result.Line = append(lines.h, lines.v...)
 
 	// 線をテーブルごとに振り分け
-	// TODO 振り分けのロジックを表が横並びの場合にも対応させる必要があるかも
-	var tableMatl []Lines
-	vc, hc := 0, 0
-	for hc < len(lines.h)-1 {
-		if !nearlyEqual(lines.h[hc].Fix, lines.v[vc].VarMax) {
-			result.Line = append(result.Line, lines.h[hc])
-			hc++
-		} else {
-			ls := Lines{}
-			vEndPoint := lines.v[vc].VarMin
-			for !isSeperated(lines.v[vc].VarMax, vEndPoint) {
-				ls.v = append(ls.v, lines.v[vc])
-				vc++
-			}
-			for !isSeperated(lines.h[hc].Fix, vEndPoint) {
-				ls.h = append(ls.h, lines.h[hc])
-				hc++
-			}
-			if len(ls.h) == 1 || len(ls.v) == 1 {
-				result.Line = append(result.Line, ls.v...)
-				result.Line = append(result.Line, ls.h...)
-			} else {
-				tableMatl = append(tableMatl, ls)
+	var tableMatls []Lines
+	tableMatl := Lines{}
+	tbbox := BoundingBox{}
+	for {
+	GET_TBBOX:
+		for _, hl := range lines.h {
+			for _, vl := range lines.v {
+				if nearlyEqual(hl.Fix, vl.VarMax) {
+					tbbox = BoundingBox{
+						Point{hl.VarMin - 1.8, vl.VarMin - 1.8},
+						Point{hl.VarMax + 1.8, vl.VarMax + 1.8},
+					}
+					break GET_TBBOX
+				}
 			}
 		}
+		if tbbox.isEmpty() {
+			result.Line = append(result.Line, lines.v...)
+			result.Line = append(result.Line, lines.h...)
+			break
+		}
+		poped := []Line{}
+		for _, hl := range lines.h {
+			if tbbox.contains(&Point{hl.VarMax, hl.Fix}) {
+				tableMatl.h = append(tableMatl.h, hl)
+			} else {
+				poped = append(poped, hl)
+			}
+		}
+		lines.h = poped
+		poped = []Line{}
+		for _, vl := range lines.v {
+			if tbbox.contains(&Point{vl.Fix, vl.VarMin}) {
+				tableMatl.v = append(tableMatl.v, vl)
+			} else {
+				poped = append(poped, vl)
+			}
+		}
+		lines.v = poped
+		if len(tableMatl.h) == 1 || len(tableMatl.v) == 1 {
+			result.Line = append(result.Line, tableMatl.v...)
+			result.Line = append(result.Line, tableMatl.h...)
+		} else {
+			tableMatls = append(tableMatls, tableMatl)
+		}
+		tableMatl = Lines{}
+		tbbox = BoundingBox{}
 	}
 
-	for _, ls := range tableMatl {
+	for _, ls := range tableMatls {
 		ls.sortXY()
 		result.Table = append(result.Table, *NewTable(ls))
 	}
