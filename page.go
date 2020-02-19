@@ -5,6 +5,7 @@
 package pdf
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -12,6 +13,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/rakyll/statik/fs"
 )
 
 // A Page represent a single page in a PDF file.
@@ -138,17 +141,19 @@ func (f Font) Width(code int) float64 {
 }
 
 // Encoder returns the encoding between font code point sequences and UTF-8.
-func (f Font) Encoder() TextEncoding {
+func (f Font) Encoder() [2]TextEncoding {
 	enc := f.V.Key("Encoding")
+	te := [2]TextEncoding{}
 	switch enc.Kind() {
 	case Name:
 		switch enc.Name() {
 		case "WinAnsiEncoding":
-			return &byteEncoder{&winAnsiEncoding}
+			te[0] = &byteEncoder{&winAnsiEncoding}
 		case "MacRomanEncoding":
-			return &byteEncoder{&macRomanEncoding}
+			te[0] = &byteEncoder{&macRomanEncoding}
 		case "UniJIS-UTF16-V", "UniJIS-UTF16-H", "UniJIS-UCS2-V", "UniJIS-UCS2-H":
-			return &utf16beEncoder{}
+			te[0] = &utf16beEncoder{}
+			te[1] = getCmap(enc.Name())
 		default:
 			toUnicode := f.V.Key("ToUnicode")
 			switch toUnicode.Kind() {
@@ -156,24 +161,25 @@ func (f Font) Encoder() TextEncoding {
 				cm := readCmap(toUnicode.Reader())
 				if cm == nil {
 					println("nil cmap", enc.Name())
-					return &nopEncoder{}
+					te[0] = &nopEncoder{}
 				}
-				return cm
+				te[0] = cm
 			default:
 				println("unknown encoding", enc.Name())
-				return &nopEncoder{}
+				te[0] = &nopEncoder{}
 			}
 		}
 	case Dict:
-		return &dictEncoder{enc.Key("Differences")}
+		te[0] = &dictEncoder{enc.Key("Differences")}
 	case Null:
 		// ok, try ToUnicode
 	default:
 		println("unexpected encoding", enc.String())
-		return &nopEncoder{}
+		te[0] = &nopEncoder{}
 	}
 
-	return &byteEncoder{&pdfDocEncoding}
+	return te
+	// return &byteEncoder{&pdfDocEncoding}
 }
 
 type dictEncoder struct {
@@ -237,6 +243,16 @@ func (e *byteEncoder) Decode(raw string) (text string) {
 type cmap struct {
 	space   [4][][2]string
 	bfrange []bfrange
+}
+
+func (m *cmap) append(srcLo string, srcHi string, dst string) {
+	b, err := hex.DecodeString(dst)
+	if err == nil {
+		if len(dst) == 4 {
+			dst = string(b)
+		}
+	}
+	m.bfrange = append(m.bfrange, bfrange{srcLo, srcHi, dst})
 }
 
 func (m *cmap) Decode(raw string) (text string) {
@@ -337,7 +353,7 @@ func readCmap(toUnicode io.ReadCloser) *cmap {
 			}
 			for i := 0; i < n; i++ {
 				dst, srcHi, srcLo := uni(stk.Pop()), uni(stk.Pop()), uni(stk.Pop())
-				m.bfrange = append(m.bfrange, bfrange{srcLo, srcHi, dst})
+				m.append(srcLo, srcHi, dst)
 			}
 		case "beginbfchar", "begincidchar":
 			n = int(stk.Pop().Int64())
@@ -348,7 +364,26 @@ func readCmap(toUnicode io.ReadCloser) *cmap {
 			for i := 0; i < n; i++ {
 				dst, srcHi := uni(stk.Pop()), uni(stk.Pop())
 				srcLo := srcHi
-				m.bfrange = append(m.bfrange, bfrange{srcLo, srcHi, dst})
+				m.append(srcLo, srcHi, dst)
+			}
+		case "beginnotdefrange":
+			n = int(stk.Pop().Int64())
+		case "endnotdefrange":
+			if n < 0 {
+				panic("missing endnotdefrange")
+			}
+			for i := 0; i < n; i++ {
+				dst, srcHi, srcLo := uni(stk.Pop()), uni(stk.Pop()), uni(stk.Pop())
+				lo := []rune(srcLo)
+				hi := []rune(srcHi)
+				if lo[1] == 0 && hi[1] == 31 {
+					for j := 0; j <= 31; j++ {
+						r := []int32{0, int32(j)}
+						m.append(string(r), string(r), dst)
+					}
+				} else {
+					panic("Unexpected range og notdefrange")
+				}
 			}
 		case "defineresource":
 			category := stk.Pop().Name()
@@ -364,6 +399,13 @@ func readCmap(toUnicode io.ReadCloser) *cmap {
 		return nil
 	}
 	return &m
+}
+
+func getCmap(name string) *cmap {
+	statikFS, _ := fs.New()
+	r, _ := statikFS.Open("/" + name + ".txt")
+	defer r.Close()
+	return readCmap(r)
 }
 
 type matrix [3][3]float64
@@ -433,8 +475,8 @@ type Line struct {
 	VarMax float64
 }
 
-// NewLine constructs a Line
-func NewLine(pt ...*Point) *Line {
+// newLine constructs a Line
+func newLine(pt ...*Point) *Line {
 	l := new(Line)
 	setDefault := func() {
 		l.Type = "nil"
@@ -480,8 +522,6 @@ type Lines struct {
 	v []Line
 	h []Line
 }
-
-// NewLines constructs Lines
 
 // 座標の近い線を合成
 func (ls *Lines) marge() {
@@ -591,11 +631,6 @@ func (ls *Lines) append(x *Lines) {
 	ls.h = append(ls.h, x.h...)
 }
 
-func (ls *Lines) appendNewLine() {
-	ls.v = append(ls.v, *NewLine())
-	ls.h = append(ls.h, *NewLine())
-}
-
 // A Cell represents a range surrounded by a Line
 type Cell struct {
 	Text []Text
@@ -608,8 +643,8 @@ type Table struct {
 	BoundingBox
 }
 
-// NewTable constructs a Table from Lines
-func NewTable(ls Lines) *Table {
+// newTable constructs a Table from Lines
+func newTable(ls Lines) *Table {
 	crosses := func(hl, vl Line) bool {
 		return vl.VarMax+1.0 > hl.Fix &&
 			hl.Fix > vl.VarMin-1.0 &&
@@ -630,7 +665,7 @@ func NewTable(ls Lines) *Table {
 		vLeft := vCrossAtTop[0]
 		vCrossAtTop = vCrossAtTop[1:]
 		for _, vRight := range vCrossAtTop {
-			hBottom := *NewLine()
+			hBottom := *newLine()
 			for _, hl := range ls.h {
 				if hTop.Fix > hl.Fix &&
 					crosses(hl, vLeft) &&
@@ -669,8 +704,8 @@ type BoundingBox struct {
 	Max Point
 }
 
-// NewBoundingBox converts media box information of pdf to BoundingBox structure.
-func NewBoundingBox(mbox Value) *BoundingBox {
+// newBoundingBox converts media box information of pdf to BoundingBox structure.
+func newBoundingBox(mbox Value) *BoundingBox {
 	bbox := new(BoundingBox)
 	bbox.Min.X = mbox.Index(0).Float64()
 	bbox.Min.Y = mbox.Index(1).Float64()
@@ -702,24 +737,24 @@ func (bbox *BoundingBox) points() (*Point, *Point) {
 	return &bbox.Min, &bbox.Max
 }
 
-// A FontInfos is Font information that you want to get only once.
-type FontInfos struct {
+// A fontInfos is Font information that you want to get only once.
+type fontInfos struct {
 	Name    string
-	Encoder TextEncoding
+	Encoder [2]TextEncoding
 	Width   map[int]float64
 	DWidth  float64 // Default
 	Bytes   int
 }
 
 // CreateText creates a Text object from a string(Tj or TJ argument).
-func (fi *FontInfos) CreateText(s string, g *gstate) Text {
-	cid := fi.charID(s)
+func (fi *fontInfos) CreateText(s string, g *gstate) Text {
+	gid := fi.getGid(s)
 	text := Text{}
 
 	n := 0
-	for _, ch := range fi.Encoder.Decode(s) {
+	for _, ch := range fi.Encoder[0].Decode(s) {
 		Trm := matrix{{g.Tfs * g.Th, 0, 0}, {0, g.Tfs, 0}, {0, g.Trise, 1}}.mul(g.Tm).mul(g.CTM)
-		w0 := fi.Width[cid[n]]
+		w0 := fi.Width[gid[n]]
 		if w0 == 0 {
 			w0 = fi.DWidth
 		}
@@ -745,15 +780,22 @@ func (fi *FontInfos) CreateText(s string, g *gstate) Text {
 	return text
 }
 
-func (fi *FontInfos) charID(s string) []int {
+func (fi *fontInfos) getGid(s string) []int {
 	// TODO: TextEncoderのDecodeから取得したい
+	chrs := []int{}
+	if fi.Encoder[1] != nil {
+		s = fi.Encoder[1].Decode(s)
+		for _, r := range s {
+			chrs = append(chrs, int(r))
+		}
+		return chrs
+	}
 	bytes := []byte(s)
-	charIDs := []int{}
 	buf := 0
 	for i, r := range bytes {
 		mod := (i + 1) % fi.Bytes
 		if mod == 0 {
-			charIDs = append(charIDs, buf+int(r))
+			chrs = append(chrs, buf+int(r))
 			buf = 0
 		} else {
 			buf2 := int(r)
@@ -763,42 +805,42 @@ func (fi *FontInfos) charID(s string) []int {
 			buf += buf2
 		}
 	}
-	return charIDs
+	return chrs
 }
 
-// A FontInfo interface is used in combination with FontInfos.
-type FontInfo interface {
+// A fontInfo interface is used in combination with fontInfos.
+type fontInfo interface {
 	setWidth(*Font)
-	getFontInfos() FontInfos
+	getFontInfos() fontInfos
 }
 
-// A Type1Font is a ASCII font.
-type Type1Font struct {
-	FontInfos
+// A type1Font is a ASCII font.
+type type1Font struct {
+	fontInfos
 }
 
-// A Type0Font is mainly used for Japanese fonts.
-type Type0Font struct {
-	FontInfos
+// A type0Font is mainly used for Japanese fonts.
+type type0Font struct {
+	fontInfos
 }
 
-// NewFontInfo is the constructor of FontInfo. Processing branches depending on the value of "Subtype".
-func NewFontInfo(f *Font) FontInfo {
-	var fi FontInfo
+// newFontInfo is the constructor of FontInfo. Processing branches depending on the value of "Subtype".
+func newFontInfo(f *Font) fontInfo {
+	var fi fontInfo
 	switch st := f.V.Key("Subtype").Name(); st {
 	case "TrueType", "Type1":
-		fi = NewType1Font(f)
+		fi = newType1Font(f)
 	case "Type0":
-		fi = NewType0Font(f)
+		fi = newType0Font(f)
 	default:
 		println("Unknown Font")
 	}
 	return fi
 }
 
-// NewType1Font is called by NewFontInfo.
-func NewType1Font(f *Font) *Type1Font {
-	fi := new(Type1Font)
+// newType1Font is called by newFontInfo.
+func newType1Font(f *Font) *type1Font {
+	fi := new(type1Font)
 	fi.Name = f.BaseFont()
 	fi.Encoder = f.Encoder()
 	fi.Bytes = 1
@@ -806,7 +848,7 @@ func NewType1Font(f *Font) *Type1Font {
 	return fi
 }
 
-func (tp1 *Type1Font) setWidth(f *Font) {
+func (tp1 *type1Font) setWidth(f *Font) {
 	widthsMap := map[int]float64{}
 	first := f.FirstChar()
 	last := f.LastChar()
@@ -818,13 +860,13 @@ func (tp1 *Type1Font) setWidth(f *Font) {
 	tp1.DWidth = .1000
 }
 
-func (tp1 *Type1Font) getFontInfos() FontInfos {
-	return tp1.FontInfos
+func (tp1 *type1Font) getFontInfos() fontInfos {
+	return tp1.fontInfos
 }
 
-// NewType0Font is called by NewFontInfo.
-func NewType0Font(f *Font) *Type0Font {
-	fi := new(Type0Font)
+// newType0Font is called by newFontInfo.
+func newType0Font(f *Font) *type0Font {
+	fi := new(type0Font)
 	fi.Name = f.BaseFont()
 	fi.Encoder = f.Encoder()
 	fi.Bytes = 2
@@ -832,7 +874,7 @@ func NewType0Font(f *Font) *Type0Font {
 	return fi
 }
 
-func (tp0 *Type0Font) setWidth(f *Font) {
+func (tp0 *type0Font) setWidth(f *Font) {
 	widthsMap := map[int]float64{}
 	df := f.V.Key("DescendantFonts").Index(0)
 	widths := df.Key("W")
@@ -865,8 +907,8 @@ func (tp0 *Type0Font) setWidth(f *Font) {
 	tp0.DWidth = df.Key("DW").Float64()
 }
 
-func (tp0 *Type0Font) getFontInfos() FontInfos {
-	return tp0.FontInfos
+func (tp0 *type0Font) getFontInfos() fontInfos {
+	return tp0.fontInfos
 }
 
 // Content describes the basic content on a page: the text and any drawn lines.
@@ -935,12 +977,12 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
-	fontInfos := map[string]FontInfo{}
+	fontInfos := map[string]fontInfo{}
 
 	var texts []Text
-	mbox := *NewBoundingBox(parent.Key("MediaBox"))
+	mbox := *newBoundingBox(parent.Key("MediaBox"))
 	if mbox.isEmpty() {
-		mbox = *NewBoundingBox(parent.Key("BBox"))
+		mbox = *newBoundingBox(parent.Key("BBox"))
 	}
 	showText := func(s string) {
 		fi := fontInfos[g.Tf].getFontInfos()
@@ -964,7 +1006,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	pstackToLine := func() *Lines {
 		ls := new(Lines)
 		for i := 0; i < len(pstack)-1; i++ {
-			l := NewLine(pstack[i], pstack[i+1])
+			l := newLine(pstack[i], pstack[i+1])
 			switch l.Type {
 			case "V":
 				ls.v = append(ls.v, *l)
@@ -1171,7 +1213,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				}
 				g.Tf = args[0].Name()
 				if _, ok := fontInfos[g.Tf]; !ok {
-					fontInfos[g.Tf] = NewFontInfo(&Font{parent.Key("Resources").Key("Font").Key(g.Tf)})
+					fontInfos[g.Tf] = newFontInfo(&Font{parent.Key("Resources").Key("Font").Key(g.Tf)})
 				}
 				g.Tfs = args[1].Float64()
 
@@ -1311,7 +1353,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 
 	for _, ls := range tableMatls {
 		ls.sortXY()
-		result.Table = append(result.Table, *NewTable(ls))
+		result.Table = append(result.Table, *newTable(ls))
 	}
 
 	//テキストをテーブルに割り当て
