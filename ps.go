@@ -58,6 +58,8 @@ func Interpret(rd io.ReadCloser, stk *Stack, do func(stk *Stack, op string)) {
 	b.allowObjptr = false
 	b.allowStream = false
 	var dicts []dict
+	var dup bool
+	var dups []*dict
 Reading:
 	for {
 		tok := b.readToken()
@@ -87,16 +89,27 @@ Reading:
 				}
 				stk.Push(Value{nil, objptr{}, dicts[len(dicts)-1]})
 				continue
+			case "dup":
+				dup = true
+				continue
 			case "begin":
 				d := stk.Pop()
 				if d.Kind() != Dict {
 					panic("cannot begin non-dict")
 				}
 				dicts = append(dicts, d.data.(dict))
+				if dup {
+					dups = append(dups, &dicts[len(dicts)-1])
+					dup = false
+				}
 				continue
 			case "end":
 				if len(dicts) <= 0 {
 					panic("mismatched begin/end")
+				}
+				if len(dups) > 0 && dups[len(dups)-1] == &dicts[len(dicts)-1] {
+					stk.Push(Value{nil, objptr{}, dicts[len(dicts)-1]})
+					dups = dups[:len(dups)-1]
 				}
 				dicts = dicts[:len(dicts)-1]
 				continue
