@@ -1,31 +1,30 @@
-// Copyright 2014 The Go Authors.  All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 // PDFファイルのパスの配列を受け取ってContentオブジェクトの配列をjsonで返す
 // toFileがTrueの場合jsonファイルとついでにラインの解析結果をプロットしたpngファイルを出力する
 
-package pdf
+package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/rsc.io/pdf"
 	"gonum.org/v1/plot"
 	"gonum.org/v1/plot/plotter"
 	"gonum.org/v1/plot/plotutil"
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePage(filePath string, toFile bool) []Content {
-	r, _ := Open(filePath)
+func parsePage(filePath string, toFile bool) []pdf.Content {
+	r, _ := pdf.Open(filePath)
 	np := r.NumPage()
-	doc := make([]Content, np)
+	doc := make([]pdf.Content, np)
 	var wg sync.WaitGroup
 	for i := 1; i <= np; i++ {
 		wg.Add(1)
@@ -44,7 +43,7 @@ func parsePage(filePath string, toFile bool) []Content {
 	return doc
 }
 
-func saveLinePng(cont *Content, mbox *Value, filePath string, pageIdx int) {
+func saveLinePng(cont *pdf.Content, mbox *pdf.Value, filePath string, pageIdx int) {
 	plt, _ := plot.New()
 	plt.Add(plotter.NewGrid())
 	plt.X.Min = mbox.Index(0).Float64()
@@ -88,7 +87,7 @@ func removeExtension(filePath string) string {
 // JSON receives an array of paths and return array of content objects as JSON.
 func JSON(filePaths []string, toFile bool) []byte {
 	sTime := time.Now()
-	docs := make([][]Content, len(filePaths))
+	docs := make([][]pdf.Content, len(filePaths))
 	var wg sync.WaitGroup
 	for i, fn := range filePaths {
 		wg.Add(1)
@@ -109,4 +108,21 @@ func JSON(filePaths []string, toFile bool) []byte {
 		result = js
 	}
 	return result
+}
+
+func main() {
+	flag.Parse()
+	args := flag.Args()
+	var path []string
+	toFile, err := strconv.ParseBool(args[0])
+	if err != nil {
+		toFile = true
+		path = args
+	} else {
+		path = args[1:]
+	}
+	for i, p := range path {
+		path[i] = filepath.FromSlash(p)
+	}
+	os.Stdout.Write(JSON(path, toFile))
 }
