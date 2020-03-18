@@ -55,7 +55,7 @@ func cleanTexts(ts []pdf.Text) []pdf.Text {
 		for _, c := range t.Char {
 			switch c.S {
 			// ハイフンっぽい文字を揃える
-			case "–", "―", "−":
+			case "–", "―", "−", "─":
 				c.S = "－"
 			// 全角の点を半角に
 			case "・":
