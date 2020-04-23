@@ -21,21 +21,36 @@ import (
 	"gonum.org/v1/plot/vg"
 )
 
-func parsePage(filePath string, toFile bool) []pdf.Content {
+type Page struct {
+	Contents pdf.Content
+	MediaBox pdf.BoundingBox
+}
+
+func NewPage(cont pdf.Content, mbox pdf.Value) *Page {
+	p := new(Page)
+	p.Contents = cont
+	p.MediaBox = pdf.BoundingBox{
+		Min: pdf.Point{X: mbox.Index(0).Float64(), Y: mbox.Index(1).Float64()},
+		Max: pdf.Point{X: mbox.Index(2).Float64(), Y: mbox.Index(3).Float64()},
+	}
+	return p
+}
+
+func parsePage(filePath string, toFile bool) []Page {
 	r, _ := pdf.Open(filePath)
 	np := r.NumPage()
-	doc := make([]pdf.Content, np)
+	doc := make([]Page, np)
 	var wg sync.WaitGroup
 	for i := 1; i <= np; i++ {
 		wg.Add(1)
 		go func(i int) {
 			pg := r.Page(i)
 			cont := pg.Contents()
+			mb := pg.V.Key("MediaBox")
+			doc[i-1] = *NewPage(cont, mb)
 			if toFile {
-				mb := pg.V.Key("MediaBox")
-				saveLinePng(&cont, &mb, filePath, i)
+				saveLinePng(&doc[i-1], filePath, i)
 			}
-			doc[i-1] = cont
 			wg.Done()
 		}(i)
 	}
@@ -43,14 +58,14 @@ func parsePage(filePath string, toFile bool) []pdf.Content {
 	return doc
 }
 
-func saveLinePng(cont *pdf.Content, mbox *pdf.Value, filePath string, pageIdx int) {
+func saveLinePng(page *Page, filePath string, pageIdx int) {
 	plt, _ := plot.New()
 	plt.Add(plotter.NewGrid())
-	plt.X.Min = mbox.Index(0).Float64()
-	plt.Y.Min = mbox.Index(1).Float64()
-	plt.X.Max = mbox.Index(2).Float64()
-	plt.Y.Max = mbox.Index(3).Float64()
-	for _, t := range cont.Table {
+	plt.X.Min = page.MediaBox.Min.X
+	plt.Y.Min = page.MediaBox.Min.Y
+	plt.X.Max = page.MediaBox.Max.X
+	plt.Y.Max = page.MediaBox.Max.Y
+	for _, t := range page.Contents.Table {
 		for _, c := range t.Cell {
 			draw(plt, [4]float64{c.Min.X, c.Max.X, c.Max.Y, c.Max.Y}, 0, 0)
 			draw(plt, [4]float64{c.Max.X, c.Max.X, c.Min.Y, c.Max.Y}, 0, 0)
@@ -58,7 +73,7 @@ func saveLinePng(cont *pdf.Content, mbox *pdf.Value, filePath string, pageIdx in
 			draw(plt, [4]float64{c.Min.X, c.Min.X, c.Min.Y, c.Max.Y}, 0, 0)
 		}
 	}
-	for _, l := range cont.Line {
+	for _, l := range page.Contents.Line {
 		xy := l.ToXY()
 		draw(plt, [4]float64{xy[0].X, xy[1].X, xy[0].Y, xy[1].Y}, 2, 2)
 	}
@@ -87,7 +102,7 @@ func removeExtension(filePath string) string {
 // JSON receives an array of paths and return array of content objects as JSON.
 func JSON(filePaths []string, toFile bool) []byte {
 	sTime := time.Now()
-	docs := make([][]pdf.Content, len(filePaths))
+	docs := make([][]Page, len(filePaths))
 	var wg sync.WaitGroup
 	for i, fn := range filePaths {
 		wg.Add(1)
