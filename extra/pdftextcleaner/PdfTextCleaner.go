@@ -10,18 +10,9 @@ import (
 	"golang.org/x/text/width"
 )
 
-func main() {
-	flag.Parse()
-	cmdArgs := flag.Args()
-	var js []byte
-	if len(cmdArgs) != 0 {
-		arg := []byte(cmdArgs[0])
-		js = cleanPdfText(arg)
-	} else {
-		stdin, _ := ioutil.ReadAll(os.Stdin)
-		js = cleanPdfText(stdin)
-	}
-	os.Stdout.Write(js)
+type Page struct {
+	Contents pdf.Content
+	MediaBox pdf.BoundingBox
 }
 
 func cleanPdfText(raw []byte) []byte {
@@ -32,14 +23,14 @@ func cleanPdfText(raw []byte) []byte {
 	default:
 		rawJSON, _ = ioutil.ReadFile(string(raw))
 	}
-	var docs [][]pdf.Content
+	var docs [][]Page
 	json.Unmarshal(rawJSON, &docs)
 	for i, doc := range docs {
 		for j, page := range doc {
-			docs[i][j].Text = cleanTexts(page.Text)
-			for k, table := range page.Table {
+			docs[i][j].Contents.Text = cleanTexts(page.Contents.Text)
+			for k, table := range page.Contents.Table {
 				for l, cell := range table.Cell {
-					docs[i][j].Table[k].Cell[l].Text = cleanTexts(cell.Text)
+					docs[i][j].Contents.Table[k].Cell[l].Text = cleanTexts(cell.Text)
 				}
 			}
 		}
@@ -70,4 +61,18 @@ func cleanTexts(ts []pdf.Text) []pdf.Text {
 		}
 	}
 	return cleanedTexts
+}
+
+func main() {
+	flag.Parse()
+	cmdArgs := flag.Args()
+	var js []byte
+	if len(cmdArgs) != 0 {
+		arg := []byte(cmdArgs[0])
+		js = cleanPdfText(arg)
+	} else {
+		stdin, _ := ioutil.ReadAll(os.Stdin)
+		js = cleanPdfText(stdin)
+	}
+	os.Stdout.Write(js)
 }
