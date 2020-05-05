@@ -1092,21 +1092,19 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 			case "h": // パスを閉じる(最後のポイントから最初のポイントまでパスを引く)
 				closePath()
 			case "n", "b", "b*", "B", "B*", "f", "F", "f*", "S", "s":
-				{
-					switch op {
-					case "b", "b*", "s":
-						closePath()
-					}
-					switch op {
-					case "b", "b*", "B", "B*", "f", "F", "f*":
-						fill()
-					}
-					switch op {
-					case "b", "b*", "B", "B*", "S", "s":
-						stroke()
-					}
-					pstack = []*Point{}
+				switch op {
+				case "b", "b*", "s":
+					closePath()
 				}
+				switch op {
+				case "b", "b*", "B", "B*", "f", "F", "f*":
+					fill()
+				}
+				switch op {
+				case "b", "b*", "B", "B*", "S", "s":
+					stroke()
+				}
+				pstack = []*Point{}
 
 			case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
 				gs := parent.Key("Resources").Key("ExtGState").Key(args[0].Name())
@@ -1115,27 +1113,34 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					fmt.Fprint(os.Stderr, "ExtGState's Font operator is not implemented.")
 				}
 
-			// 塗りつぶしおよびストロークの色設定。0でなければ全て描画するためtrue
+			// 塗りつぶしおよびストロークの色設定。白以外をtrueとする
+			// なおRGBは加法混色のため1 1 1が白、CMYKは減法混色のため0 0 0 0が白である。
 			case "cs", "CS":
 			case "sc", "g", "rg", "k":
-				if len(args) == 1 {
-					g.cs = args[0].Float64() != 1
-				} else {
-					var sum float64 = 0
-					for _, arg := range args {
-						sum += arg.Float64()
-					}
-					g.cs = sum > 0
+				var sum float64 = 0
+				for _, arg := range args {
+					sum += arg.Float64()
+				}
+				switch len(args) {
+				case 1:
+					g.cs = sum != 1
+				case 3:
+					g.cs = sum != 3
+				case 4:
+					g.cs = sum != 0
 				}
 			case "SC", "G", "RG", "K":
-				if len(args) == 1 {
-					g.CS = args[0].Float64() != 1
-				} else {
-					var sum float64 = 0
-					for _, arg := range args {
-						sum += arg.Float64()
-					}
-					g.CS = sum > 0
+				var sum float64 = 0
+				for _, arg := range args {
+					sum += arg.Float64()
+				}
+				switch len(args) {
+				case 1:
+					g.CS = sum != 1
+				case 3:
+					g.CS = sum != 3
+				case 4:
+					g.CS = sum != 0
 				}
 
 			case "Do":
