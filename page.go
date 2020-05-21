@@ -723,12 +723,12 @@ func (bbox *BoundingBox) isEmpty() bool {
 
 func (bbox *BoundingBox) contains(pts ...*Point) bool {
 	for _, pt := range pts {
-		if bbox.Min.X > pt.X ||
-			bbox.Min.Y > pt.Y ||
-			bbox.Max.X < pt.X ||
-			bbox.Max.Y < pt.Y {
+		if bbox.Min.X-1.0 > pt.X ||
+			bbox.Min.Y-1.0 > pt.Y ||
+			bbox.Max.X+1.0 < pt.X ||
+			bbox.Max.Y+1.0 < pt.Y {
 			return false
-		}
+		} //数値は調整
 	}
 	return true
 }
