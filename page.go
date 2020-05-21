@@ -1071,15 +1071,17 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					panic("bad l or m")
 				}
 				pstack = append(pstack, &Point{
-					args[0].Float64() + g.CTM[2][0],
-					args[1].Float64() + g.CTM[2][1],
+					g.CTM[2][0] + args[0].Float64()*g.CTM[0][0],
+					g.CTM[2][1] + args[1].Float64()*g.CTM[1][1],
 				})
 			case "re": // 四角形のパスを生成
 				if len(args) != 4 {
 					panic("bad re")
 				}
-				x, y := args[0].Float64()+g.CTM[2][0], args[1].Float64()+g.CTM[2][1]
-				w, h := args[2].Float64(), args[3].Float64()
+				x := g.CTM[2][0] + args[0].Float64()*g.CTM[0][0]
+				y := g.CTM[2][1] + args[1].Float64()*g.CTM[1][1]
+				w := args[2].Float64() * g.CTM[0][0]
+				h := args[3].Float64() * g.CTM[1][1]
 				points := []*Point{
 					&Point{x, y + h},
 					&Point{x + w, y + h},
@@ -1173,8 +1175,8 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					abcdef[i] = args[i].Float64()
 					m[i/2][i%2] = abcdef[i]
 				}
-				if !(abcdef[0] == 1 && abcdef[1] == 0 && abcdef[2] == 0 && abcdef[3] == 1) {
-					fmt.Fprintf(os.Stderr, "Coordinate system is not implemented except for movement. %v\n", abcdef)
+				if !(abcdef[1] == 0 && abcdef[2] == 0) {
+					fmt.Fprintf(os.Stderr, "Coordinate system is not implemented distorted shape. %v\n", abcdef)
 				}
 				m[2][2] = 1
 				g.CTM = m.mul(g.CTM)
