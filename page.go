@@ -496,7 +496,7 @@ func newLine(pt ...*Point) *Line {
 			l.VarMin = math.Min(pt[0].X, pt[1].X)
 			l.VarMax = math.Max(pt[0].X, pt[1].X)
 		} else {
-			fmt.Fprintf(os.Stderr, "Line is neither vertical nor horizontal. %v\n", pt)
+			fmt.Fprintf(os.Stderr, "Line is neither vertical nor horizontal. %v to %v\n", *pt[0], *pt[1])
 			setDefault()
 		}
 	} else {
@@ -687,8 +687,12 @@ func newTable(ls Lines) *Table {
 			break
 		}
 	}
-	t.Min = Point{ls.h[0].VarMin, ls.v[0].VarMin}
-	t.Max = Point{ls.h[0].VarMax, ls.v[0].VarMax}
+	if len(ls.h) == 0 && len(ls.v) == 0 {
+		t.Min = Point{ls.h[0].VarMin, ls.v[0].VarMin}
+		t.Max = Point{ls.h[0].VarMax, ls.v[0].VarMax}
+	} else {
+		fmt.Fprintf(os.Stderr, "Lines are not table.\n")
+	}
 	return t
 }
 
@@ -1070,9 +1074,27 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 2 {
 					panic("bad l or m")
 				}
+				//printStream(strm)
 				pstack = append(pstack, &Point{
 					g.CTM[2][0] + args[0].Float64()*g.CTM[0][0],
 					g.CTM[2][1] + args[1].Float64()*g.CTM[1][1],
+				})
+			// c,v,yはそれぞれベジェ曲線を描画するためのオペレータだが都合上直線として扱う
+			case "c":
+				if len(args) != 6 {
+					panic("bad c")
+				}
+				pstack = append(pstack, &Point{
+					g.CTM[2][0] + args[4].Float64()*g.CTM[0][0],
+					g.CTM[2][1] + args[5].Float64()*g.CTM[1][1],
+				})
+			case "v", "y":
+				if len(args) != 4 {
+					panic("bad v or y")
+				}
+				pstack = append(pstack, &Point{
+					g.CTM[2][0] + args[2].Float64()*g.CTM[0][0],
+					g.CTM[2][1] + args[3].Float64()*g.CTM[1][1],
 				})
 			case "re": // 四角形のパスを生成
 				if len(args) != 4 {
