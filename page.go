@@ -687,7 +687,7 @@ func newTable(ls Lines) *Table {
 			break
 		}
 	}
-	if len(ls.h) == 0 && len(ls.v) == 0 {
+	if len(ls.h) > 0 && len(ls.v) > 0 {
 		t.Min = Point{ls.h[0].VarMin, ls.v[0].VarMin}
 		t.Max = Point{ls.h[0].VarMax, ls.v[0].VarMax}
 	} else {
