@@ -754,6 +754,7 @@ type fontInfos struct {
 func (fi *fontInfos) CreateText(s string, g *gstate) Text {
 	gid := fi.getGid(s)
 	text := Text{}
+	CORR := 1000. // グリフ幅の1はテキスト空間の1/1000のサイズを表すため
 
 	n := 0
 	for _, ch := range fi.Encoder[0].Decode(s) {
@@ -768,12 +769,12 @@ func (fi *fontInfos) CreateText(s string, g *gstate) Text {
 				fi.Name, Trm[0][0], string(ch),
 				BoundingBox{
 					Point{Trm[2][0], Trm[2][1]},
-					Point{Trm[2][0] + (w0 / 1000 * Trm[0][0]), Trm[2][1] + Trm[1][1]},
+					Point{Trm[2][0] + (w0 / CORR * Trm[0][0]), Trm[2][1] + Trm[1][1]},
 				},
 			}
 			text.append(&char)
 		}
-		tx := w0/1000*g.Tfs + g.Tc
+		tx := w0/CORR*g.Tfs + g.Tc
 		if isSpace {
 			tx += g.Tw
 		}
