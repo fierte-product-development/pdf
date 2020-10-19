@@ -768,12 +768,12 @@ func (fi *fontInfos) CreateText(s string, g *gstate) Text {
 				fi.Name, Trm[0][0], string(ch),
 				BoundingBox{
 					Point{Trm[2][0], Trm[2][1]},
-					Point{Trm[2][0] + (w0 / fi.DWidth * Trm[0][0]), Trm[2][1] + Trm[1][1]},
+					Point{Trm[2][0] + (w0 / 1000 * Trm[0][0]), Trm[2][1] + Trm[1][1]},
 				},
 			}
 			text.append(&char)
 		}
-		tx := w0/fi.DWidth*g.Tfs + g.Tc
+		tx := w0/1000*g.Tfs + g.Tc
 		if isSpace {
 			tx += g.Tw
 		}
@@ -861,7 +861,7 @@ func (tp1 *type1Font) setWidth(f *Font) {
 		widthsMap[first+i] = widths.Index(i).Float64()
 	}
 	tp1.Width = widthsMap
-	tp1.DWidth = .1000
+	tp1.DWidth = f.V.Key("FontDescriptor").Key("MissingWidth").Float64() // default = 0
 }
 
 func (tp1 *type1Font) getFontInfos() fontInfos {
@@ -908,7 +908,11 @@ func (tp0 *type0Font) setWidth(f *Font) {
 		}
 	}
 	tp0.Width = widthsMap
-	tp0.DWidth = df.Key("DW").Float64()
+	if dw := df.Key("DW").Float64(); dw != 0 {
+		tp0.DWidth = dw
+	} else {
+		tp0.DWidth = 1000
+	}
 }
 
 func (tp0 *type0Font) getFontInfos() fontInfos {
