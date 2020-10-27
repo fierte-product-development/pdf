@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rsc.io/pdf"
+	"github.com/rsc.io/pdf/core"
 	"gonum.org/v1/plot"
 	"gonum.org/v1/plot/plotter"
 	"gonum.org/v1/plot/plotutil"
@@ -22,32 +22,26 @@ import (
 )
 
 type Page struct {
-	Contents pdf.Content
-	MediaBox pdf.BoundingBox
+	Contents core.Content
+	MediaBox core.BoundingBox
 }
 
-func NewPage(cont pdf.Content, mbox pdf.Value) *Page {
+func NewPage(pg core.Page) *Page {
 	p := new(Page)
-	p.Contents = cont
-	p.MediaBox = pdf.BoundingBox{
-		Min: pdf.Point{X: mbox.Index(0).Float64(), Y: mbox.Index(1).Float64()},
-		Max: pdf.Point{X: mbox.Index(2).Float64(), Y: mbox.Index(3).Float64()},
-	}
+	p.Contents = pg.Contents()
+	p.MediaBox = pg.MediaBox()
 	return p
 }
 
 func parsePage(filePath string, toFile bool) []Page {
-	r, _ := pdf.Open(filePath)
+	r, _ := core.Open(filePath)
 	np := r.NumPage()
 	doc := make([]Page, np)
 	var wg sync.WaitGroup
 	for i := 1; i <= np; i++ {
 		wg.Add(1)
 		go func(i int) {
-			pg := r.Page(i)
-			cont := pg.Contents()
-			mb := pg.V.Key("MediaBox")
-			doc[i-1] = *NewPage(cont, mb)
+			doc[i-1] = *NewPage(r.Page(i))
 			if toFile {
 				saveLinePng(&doc[i-1], filePath, i)
 			}

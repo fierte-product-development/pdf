@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package pdf
+package core
 
 import (
 	"encoding/hex"
@@ -73,11 +73,12 @@ func (p *Page) findInherited(key string) Value {
 	return Value{}
 }
 
-/*
-func (p *Page) MediaBox() Value {
-	return p.findInherited("MediaBox")
+// MediaBox returns bounding box of page.
+func (p *Page) MediaBox() BoundingBox {
+	return *newBoundingBox(p.findInherited("MediaBox"))
 }
 
+/*
 func (p *Page) CropBox() Value {
 	return p.findInherited("CropBox")
 }

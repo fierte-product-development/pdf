@@ -4,7 +4,7 @@
 
 // Reading of PDF tokens and objects from a raw byte stream.
 
-package pdf
+package core
 
 import (
 	"fmt"
