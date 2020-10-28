@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"math"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/rakyll/statik/fs"
@@ -75,7 +73,7 @@ func (p *Page) findInherited(key string) Value {
 
 // MediaBox returns bounding box of page.
 func (p *Page) MediaBox() BoundingBox {
-	return *newBoundingBox(p.findInherited("MediaBox"))
+	return *newBoundingBox(&p.V)
 }
 
 /*
@@ -425,14 +423,6 @@ func (x matrix) mul(y matrix) matrix {
 	return z
 }
 
-// 数値は調整
-func nearlyEqual(x, y float64) bool {
-	return x+1.8 > y && x-1.8 < y
-}
-func isSeperated(x, y float64) bool {
-	return x+1.8 < y
-}
-
 // A Text is List of Char.
 type Text struct {
 	Char []*Char
@@ -468,235 +458,6 @@ type Char struct {
 	BoundingBox
 }
 
-// A Line represents a line
-type Line struct {
-	Type   string
-	Fix    float64
-	VarMin float64
-	VarMax float64
-}
-
-// newLine constructs a Line
-func newLine(pt ...*Point) *Line {
-	l := new(Line)
-	setDefault := func() {
-		l.Type = "nil"
-		l.Fix = -1
-		l.VarMin = -1
-		l.VarMax = -1
-	}
-	if len(pt) == 2 {
-		if pt[0].X == pt[1].X {
-			l.Type = "V"
-			l.Fix = pt[0].X
-			l.VarMin = math.Min(pt[0].Y, pt[1].Y)
-			l.VarMax = math.Max(pt[0].Y, pt[1].Y)
-		} else if pt[0].Y == pt[1].Y {
-			l.Type = "H"
-			l.Fix = pt[0].Y
-			l.VarMin = math.Min(pt[0].X, pt[1].X)
-			l.VarMax = math.Max(pt[0].X, pt[1].X)
-		} else {
-			fmt.Fprintf(os.Stderr, "Line is neither vertical nor horizontal. %v to %v\n", *pt[0], *pt[1])
-			setDefault()
-		}
-	} else {
-		setDefault()
-	}
-	return l
-}
-
-// ToXY converts line to two points
-func (l *Line) ToXY() [2]Point {
-	var pt [2]Point
-	switch l.Type {
-	case "V":
-		pt[0], pt[1] = Point{l.Fix, l.VarMax}, Point{l.Fix, l.VarMin}
-	case "H":
-		pt[0], pt[1] = Point{l.VarMin, l.Fix}, Point{l.VarMax, l.Fix}
-	}
-	return pt
-}
-
-// Lines is a collection of Line
-type Lines struct {
-	v []Line
-	h []Line
-}
-
-// 座標の近い線を合成
-func (ls *Lines) marge() {
-	merge := func(line []Line) []Line {
-		sort.Slice(line, func(i, j int) bool {
-			p, q, ok := line[i], line[j], false
-			if nearlyEqual(p.Fix, q.Fix) {
-				if p.VarMin == q.VarMin {
-					ok = p.VarMax < q.VarMax
-				} else {
-					ok = p.VarMin < q.VarMin
-				}
-			} else {
-				ok = p.Fix < q.Fix
-			}
-			return ok
-		})
-		var mLine []Line
-		var tp string
-		var fix, vmin, vmax float64
-		for i, l := range line {
-			if i == 0 {
-				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
-			}
-			if isSeperated(vmax, l.VarMin) || !nearlyEqual(fix, l.Fix) {
-				mLine = append(mLine, Line{tp, fix, vmin, vmax})
-				tp, fix, vmin, vmax = l.Type, l.Fix, l.VarMin, l.VarMax
-			} else {
-				vmax = math.Max(vmax, l.VarMax)
-			}
-			if i == len(line)-1 {
-				mLine = append(mLine, Line{tp, fix, vmin, vmax})
-			}
-		}
-		return mLine
-	}
-	ls.v = merge(ls.v)
-	ls.h = merge(ls.h)
-}
-
-// yが高くxが低い順にソート
-func (ls *Lines) sortYX() {
-	sort.Slice(ls.v, func(i, j int) bool {
-		p, q, ok := ls.v[i], ls.v[j], false
-		if p.VarMax == q.VarMax {
-			ok = p.Fix < q.Fix
-		} else {
-			ok = p.VarMax > q.VarMax
-		}
-		return ok
-	})
-	sort.Slice(ls.h, func(i, j int) bool {
-		p, q, ok := ls.h[i], ls.h[j], false
-		if p.Fix == q.Fix {
-			ok = p.VarMin < q.VarMin
-		} else {
-			ok = p.Fix > q.Fix
-		}
-		return ok
-	})
-}
-
-// xが低くyが高い順にソート(縦線のみ)
-func (ls *Lines) sortXY() {
-	sort.Slice(ls.v, func(i, j int) bool {
-		p, q, ok := ls.v[i], ls.v[j], false
-		if p.Fix == q.Fix {
-			ok = p.VarMax > q.VarMax
-		} else {
-			ok = p.Fix < q.Fix
-		}
-		return ok
-	})
-}
-
-func (ls *Lines) centerLine(w float64) {
-	centerLine := func(line []Line) []Line {
-		var cLine []Line
-		for i := 0; i < len(line); i++ {
-			if i < len(line)-1 {
-				l := line[i : i+2]
-				if l[0].VarMax-l[0].VarMin > w {
-					if math.Abs(l[0].Fix-l[1].Fix) < w {
-						fix := (l[0].Fix + l[1].Fix) / 2
-						vmin := math.Min(l[0].VarMin, l[1].VarMin)
-						vmax := math.Max(l[0].VarMax, l[1].VarMax)
-						cLine = append(cLine, Line{l[0].Type, fix, vmin, vmax})
-						i++
-					} else {
-						cLine = append(cLine, l[0])
-					}
-				}
-			} else {
-				if line[i].VarMax-line[i].VarMin > w {
-					cLine = append(cLine, line[i])
-				}
-			}
-		}
-		return cLine
-	}
-	ls.v = centerLine(ls.v)
-	ls.h = centerLine(ls.h)
-}
-
-func (ls *Lines) append(x *Lines) {
-	ls.v = append(ls.v, x.v...)
-	ls.h = append(ls.h, x.h...)
-}
-
-// A Cell represents a range surrounded by a Line
-type Cell struct {
-	Text []Text
-	BoundingBox
-}
-
-// Table is a collection of Cell
-type Table struct {
-	Cell []Cell
-	BoundingBox
-}
-
-// newTable constructs a Table from Lines
-func newTable(ls Lines) *Table {
-	crosses := func(hl, vl Line) bool {
-		return vl.VarMax+1.0 > hl.Fix &&
-			hl.Fix > vl.VarMin-1.0 &&
-			hl.VarMax+1.0 > vl.Fix &&
-			vl.Fix > hl.VarMin-1.0
-	} // 数値は調整
-	t := new(Table)
-	for i, hTop := range ls.h {
-		var vCrossAtTop []Line
-		for _, vl := range ls.v {
-			if crosses(hTop, vl) {
-				vCrossAtTop = append(vCrossAtTop, vl)
-			}
-		}
-		if len(vCrossAtTop) == 0 {
-			continue
-		}
-		vLeft := vCrossAtTop[0]
-		vCrossAtTop = vCrossAtTop[1:]
-		for _, vRight := range vCrossAtTop {
-			hBottom := *newLine()
-			for _, hl := range ls.h {
-				if hTop.Fix > hl.Fix &&
-					crosses(hl, vLeft) &&
-					crosses(hl, vRight) {
-					hBottom = hl
-					break
-				}
-			}
-			if hBottom.Type != "nil" {
-				t.Cell = append(t.Cell, Cell{
-					BoundingBox: BoundingBox{
-						Point{vLeft.Fix, hBottom.Fix},
-						Point{vRight.Fix, hTop.Fix},
-					}})
-				vLeft = vRight
-			}
-		}
-		if i == len(ls.h)-2 {
-			break
-		}
-	}
-	if len(ls.h) > 0 && len(ls.v) > 0 {
-		t.Min = Point{ls.h[0].VarMin, ls.v[0].VarMin}
-		t.Max = Point{ls.h[0].VarMax, ls.v[0].VarMax}
-	} else {
-		fmt.Fprintf(os.Stderr, "Lines are not table.\n")
-	}
-	return t
-}
-
 // A Point represents an X, Y pair.
 type Point struct {
 	X float64
@@ -709,24 +470,32 @@ type BoundingBox struct {
 	Max Point
 }
 
-// newBoundingBox converts media box information of pdf to BoundingBox structure.
-func newBoundingBox(mbox Value) *BoundingBox {
-	bbox := new(BoundingBox)
-	bbox.Min.X = mbox.Index(0).Float64()
-	bbox.Min.Y = mbox.Index(1).Float64()
-	bbox.Max.X = mbox.Index(2).Float64()
-	bbox.Max.Y = mbox.Index(3).Float64()
+func newBoundingBox(v *Value) *BoundingBox {
+	newbb := func(v Value) *BoundingBox {
+		bbox := new(BoundingBox)
+		bbox.Min.X = v.Index(0).Float64()
+		bbox.Min.Y = v.Index(1).Float64()
+		bbox.Max.X = v.Index(2).Float64()
+		bbox.Max.Y = v.Index(3).Float64()
+		return bbox
+	}
+	bbox := newbb(v.Key("MediaBox"))
+	if bbox.IsEmpty() {
+		bbox = newbb(v.Key("BBox"))
+	}
 	return bbox
 }
 
-func (bbox *BoundingBox) isEmpty() bool {
+// IsEmpty returns whether all coordinates are zero.
+func (bbox *BoundingBox) IsEmpty() bool {
 	return bbox.Min.X == 0 &&
 		bbox.Min.Y == 0 &&
 		bbox.Max.X == 0 &&
 		bbox.Max.Y == 0
 }
 
-func (bbox *BoundingBox) contains(pts ...*Point) bool {
+// Contains returns whether or not all points passed are within range of the bbox.
+func (bbox *BoundingBox) Contains(pts ...Point) bool {
 	for _, pt := range pts {
 		if bbox.Min.X-1.0 > pt.X ||
 			bbox.Min.Y-1.0 > pt.Y ||
@@ -738,8 +507,9 @@ func (bbox *BoundingBox) contains(pts ...*Point) bool {
 	return true
 }
 
-func (bbox *BoundingBox) points() (*Point, *Point) {
-	return &bbox.Min, &bbox.Max
+// Points is used when you want to pass a bbox to Contains.
+func (bbox *BoundingBox) Points() (Point, Point) {
+	return bbox.Min, bbox.Max
 }
 
 // A fontInfos is Font information that you want to get only once.
@@ -752,7 +522,7 @@ type fontInfos struct {
 }
 
 // CreateText creates a Text object from a string(Tj or TJ argument).
-func (fi *fontInfos) CreateText(s string, g *gstate) Text {
+func (fi *fontInfos) CreateText(s string, g *gstate) *Text {
 	gid := fi.getGid(s)
 	text := Text{}
 	CORR := 1000. // グリフ幅の1はテキスト空間の1/1000のサイズを表すため
@@ -783,7 +553,7 @@ func (fi *fontInfos) CreateText(s string, g *gstate) Text {
 		g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
 		n++
 	}
-	return text
+	return &text
 }
 
 func (fi *fontInfos) getGid(s string) []int {
@@ -921,20 +691,41 @@ func (tp0 *type0Font) getFontInfos() fontInfos {
 	return tp0.fontInfos
 }
 
-// Content describes the basic content on a page: the text and any drawn lines.
-type Content struct {
-	Text  []Text
-	Table []Table
-	Line  []Line
+// A Line represents a line
+type Line struct {
+	Min Point
+	Max Point
 }
 
-func (c *Content) len() int {
-	return len(c.Text) + len(c.Table) + len(c.Line)
+// y座標が優先、上から下、左から右
+func newLine(p1 Point, p2 Point) *Line {
+	l := new(Line)
+	if p1.Y > p2.Y {
+		l.Min = p1
+		l.Max = p2
+	} else if p1.Y < p2.Y {
+		l.Min = p2
+		l.Max = p1
+	} else if p1.X < p2.X {
+		l.Min = p1
+		l.Max = p2
+	} else if p1.X > p2.X {
+		l.Min = p2
+		l.Max = p1
+	} else {
+		panic("Same points.")
+	}
+	return l
+}
+
+// Content describes the basic content on a page: the text and any drawn lines.
+type Content struct {
+	Text []*Text
+	Line []*Line
 }
 
 func (c *Content) append(cont *Content) {
 	c.Text = append(c.Text, cont.Text...)
-	c.Table = append(c.Table, cont.Table...)
 	c.Line = append(c.Line, cont.Line...)
 }
 
@@ -955,10 +746,46 @@ type gstate struct {
 	CTM   matrix
 }
 
-type lstate struct {
-	tp string
-	x  float64
-	y  float64
+func newgstate() *gstate {
+	gs := new(gstate)
+	gs.CS = true
+	gs.cs = true
+	gs.Th = 1
+	gs.CTM = ident
+	return gs
+}
+
+type pointstack struct {
+	p []Point
+}
+
+func (ps *pointstack) append(p ...Point) {
+	ps.p = append(ps.p, p...)
+}
+
+func (ps *pointstack) closePath() {
+	l := len(ps.p)
+	if l == 0 {
+		panic("point stack is empty")
+	}
+	if ps.p[0] != ps.p[l-1] {
+		ps.p = append(ps.p, ps.p[0])
+	}
+}
+
+func (ps *pointstack) stroke() []*Line {
+	var ls []*Line
+	for i := 0; i < len(ps.p)-1; i++ {
+		ls = append(ls, newLine(ps.p[i], ps.p[i+1]))
+	}
+	return ls
+}
+
+// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
+func (ps *pointstack) fill() []*Line {
+	var ls []*Line
+	ls = append(ls, ps.stroke()...)
+	return ls
 }
 
 // Contents returns the page's content.
@@ -975,72 +802,34 @@ func (p *Page) Contents() Content {
 	default:
 		println(val.Kind())
 	}
-	// デフォルトのグラフィックステート
-	g := gstate{
-		CS:  true,
-		cs:  true,
-		Th:  1,
-		CTM: ident,
-	}
-	return getContentFromStream(&p.V, vals, g)
+	return getContentFromStream(&p.V, vals, *newgstate())
 }
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
 	fontInfos := map[string]fontInfo{}
 
-	var texts []Text
-	mbox := *newBoundingBox(parent.Key("MediaBox"))
-	if mbox.isEmpty() {
-		mbox = *newBoundingBox(parent.Key("BBox"))
-	}
+	mbox := *newBoundingBox(parent)
 	showText := func(s string) {
 		fi := fontInfos[g.Tf].getFontInfos()
 		text := fi.CreateText(s, &g)
-		if !text.isEmpty() && mbox.contains(text.points()) {
-			texts = append(texts, text)
+		if !text.IsEmpty() && mbox.Contains(text.Points()) {
+			result.Text = append(result.Text, text)
 		}
 	}
 
-	var pstack []*Point
-	var lines Lines
+	var pstack pointstack
 	closePath := func() {
-		l := len(pstack)
-		if l == 0 {
-			panic("point stack is empty")
-		}
-		if pstack[0] != pstack[l-1] {
-			pstack = append(pstack, pstack[0])
-		}
-	}
-	pstackToLine := func() *Lines {
-		ls := new(Lines)
-		for i := 0; i < len(pstack)-1; i++ {
-			l := newLine(pstack[i], pstack[i+1])
-			switch l.Type {
-			case "V":
-				ls.v = append(ls.v, *l)
-			case "H":
-				ls.h = append(ls.h, *l)
-			}
-		}
-		return ls
+		pstack.closePath()
 	}
 	stroke := func() {
-		if g.CS && mbox.contains(pstack...) {
-			ls := pstackToLine()
-			lines.append(ls)
+		if g.CS && mbox.Contains(pstack.p...) {
+			result.Line = append(result.Line, pstack.stroke()...)
 		}
 	}
-	// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
 	fill := func() {
-		if g.cs && mbox.contains(pstack...) {
-			w := 1.8 // 線の太さ(数値は調整)
-			ls := pstackToLine()
-			ls.sortYX()
-			ls.sortXY()
-			ls.centerLine(w)
-			lines.append(ls)
+		if g.cs && mbox.Contains(pstack.p...) {
+			result.Line = append(result.Line, pstack.fill()...)
 		}
 	}
 
@@ -1056,7 +845,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 			}
 			switch op {
 			default:
-				//fmt.Println(op, args)
+				// fmt.Println(op, args)
 				return
 			/*
 				グラフィック描画の流れ
@@ -1075,13 +864,12 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				g = gstack[n]
 				gstack = gstack[:n]
 
-			// mは複数のパス(l)を1グループに纏めるためのオペレータ
-			case "l", "m":
+			case "l", "m": // mはパスの始点、lは直線のパス
 				if len(args) != 2 {
 					panic("bad l or m")
 				}
 				//printStream(strm)
-				pstack = append(pstack, &Point{
+				pstack.append(Point{
 					g.CTM[2][0] + args[0].Float64()*g.CTM[0][0],
 					g.CTM[2][1] + args[1].Float64()*g.CTM[1][1],
 				})
@@ -1090,7 +878,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 6 {
 					panic("bad c")
 				}
-				pstack = append(pstack, &Point{
+				pstack.append(Point{
 					g.CTM[2][0] + args[4].Float64()*g.CTM[0][0],
 					g.CTM[2][1] + args[5].Float64()*g.CTM[1][1],
 				})
@@ -1098,28 +886,11 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 4 {
 					panic("bad v or y")
 				}
-				pstack = append(pstack, &Point{
+				pstack.append(Point{
 					g.CTM[2][0] + args[2].Float64()*g.CTM[0][0],
 					g.CTM[2][1] + args[3].Float64()*g.CTM[1][1],
 				})
-			case "re": // 四角形のパスを生成
-				if len(args) != 4 {
-					panic("bad re")
-				}
-				x := g.CTM[2][0] + args[0].Float64()*g.CTM[0][0]
-				y := g.CTM[2][1] + args[1].Float64()*g.CTM[1][1]
-				w := args[2].Float64() * g.CTM[0][0]
-				h := args[3].Float64() * g.CTM[1][1]
-				points := []*Point{
-					&Point{x, y + h},
-					&Point{x + w, y + h},
-					&Point{x + w, y},
-					&Point{x, y},
-					&Point{x, y + h},
-				}
-				pstack = append(pstack, points...)
-
-			case "h": // パスを閉じる(最後のポイントから最初のポイントまでパスを引く)
+			case "h": // パスを閉じる(最後のポイントから最初のポイントまで直線のパスを引く)
 				closePath()
 			case "n", "b", "b*", "B", "B*", "f", "F", "f*", "S", "s":
 				switch op {
@@ -1134,7 +905,24 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				case "b", "b*", "B", "B*", "S", "s":
 					stroke()
 				}
-				pstack = []*Point{}
+				pstack = pointstack{}
+
+			case "re": // 四角形のパス
+				if len(args) != 4 {
+					panic("bad re")
+				}
+				x := g.CTM[2][0] + args[0].Float64()*g.CTM[0][0]
+				y := g.CTM[2][1] + args[1].Float64()*g.CTM[1][1]
+				w := args[2].Float64() * g.CTM[0][0]
+				h := args[3].Float64() * g.CTM[1][1]
+				points := []Point{
+					Point{x, y + h},
+					Point{x + w, y + h},
+					Point{x + w, y},
+					Point{x, y},
+					Point{x, y + h},
+				}
+				pstack.append(points...)
 
 			case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
 				gs := parent.Key("Resources").Key("ExtGState").Key(args[0].Name())
@@ -1173,7 +961,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					g.CS = sum != 0
 				}
 
-			case "Do":
+			case "Do": // XObjectに記載されたオペレータを実行
 				for _, arg := range args {
 					xobj := parent.Key("Resources").Key("XObject").Key(arg.String()[1:])
 					xg := g
@@ -1332,94 +1120,6 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		})
 	}
 
-	lines.marge()
-	lines.sortYX()
-	// result.Line = append(lines.h, lines.v...)
-
-	// 線をテーブルごとに振り分け
-	var tableMatls []Lines
-	tableMatl := Lines{}
-	tbbox := BoundingBox{}
-	for {
-	GET_TBBOX:
-		for _, hl := range lines.h {
-			for _, vl := range lines.v {
-				if nearlyEqual(hl.Fix, vl.VarMax) {
-					tbbox = BoundingBox{
-						Point{hl.VarMin - 1.8, vl.VarMin - 1.8},
-						Point{hl.VarMax + 1.8, vl.VarMax + 1.8},
-					}
-					break GET_TBBOX
-				}
-			}
-		}
-		if tbbox.isEmpty() {
-			result.Line = append(result.Line, lines.v...)
-			result.Line = append(result.Line, lines.h...)
-			break
-		}
-		poped := []Line{}
-		for _, hl := range lines.h {
-			if tbbox.contains(&Point{hl.VarMax, hl.Fix}) {
-				tableMatl.h = append(tableMatl.h, hl)
-			} else {
-				poped = append(poped, hl)
-			}
-		}
-		lines.h = poped
-		poped = []Line{}
-		for _, vl := range lines.v {
-			if tbbox.contains(&Point{vl.Fix, vl.VarMin}) {
-				tableMatl.v = append(tableMatl.v, vl)
-			} else {
-				poped = append(poped, vl)
-			}
-		}
-		lines.v = poped
-		if len(tableMatl.h) == 1 || len(tableMatl.v) == 1 {
-			result.Line = append(result.Line, tableMatl.v...)
-			result.Line = append(result.Line, tableMatl.h...)
-		} else {
-			tableMatls = append(tableMatls, tableMatl)
-		}
-		tableMatl = Lines{}
-		tbbox = BoundingBox{}
-	}
-
-	for _, ls := range tableMatls {
-		ls.sortXY()
-		result.Table = append(result.Table, *newTable(ls))
-	}
-
-	//テキストをテーブルに割り当て
-	sort.SliceStable(texts, func(i, j int) bool {
-		p, q, ok := texts[i], texts[j], false
-		if p.Min.Y == q.Min.Y {
-			ok = p.Min.X < q.Min.X
-		} else {
-			ok = p.Min.Y > q.Min.Y
-		}
-		return ok
-	})
-	for _, t := range texts {
-		ok := false
-		for i, tb := range result.Table {
-			if tb.contains(t.points()) {
-				for j, c := range tb.Cell {
-					if c.contains(t.points()) {
-						result.Table[i].Cell[j].Text = append(c.Text, t)
-						ok = true
-					}
-				}
-			}
-		}
-		if !ok {
-			result.Text = append(result.Text, t)
-		}
-	}
-
-	// result.Table = []Table{}
-	// result.Line = append(lines.h, lines.v...)
 	return result
 }
 
@@ -1474,18 +1174,27 @@ func buildOutline(entry Value) Outline {
 	return x
 }
 
+// デバッグ用
 func printStream(val Value) {
 	bt, _ := ioutil.ReadAll(val.Reader())
-	fmt.Printf("%v\n", string(bt))
+	print(string(bt))
 }
 
+// デバッグ用
 func printFont(f *Font) {
-	fmt.Printf("%v\n", f.V.Key("BaseFont"))
-	fmt.Printf("%v\n", f.V.Keys())
-	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Len())
-	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Keys())
-	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("CIDSystemInfo").Keys())
-	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("FontDescriptor").Keys())
-	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("FontDescriptor").Key("Flags"))
-	fmt.Printf("%v\n", f.V.Key("DescendantFonts").Index(0).Key("W"))
+	v := f.V
+	print(v.Key("BaseFont"))
+	print(v.Keys())
+	print(v.Key("DescendantFonts").Len())
+	df := v.Key("DescendantFonts").Index(0)
+	print(df.Keys())
+	print(df.Key("CIDSystemInfo").Keys())
+	print(df.Key("FontDescriptor").Keys())
+	print(df.Key("FontDescriptor").Key("Flags"))
+	print(df.Key("W"))
+	print(df.Key("DW"))
+}
+
+func print(a interface{}) {
+	fmt.Printf("%v\n", a)
 }
