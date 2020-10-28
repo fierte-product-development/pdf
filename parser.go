@@ -1,16 +1,14 @@
 // PDFファイルのパスの配列を受け取ってContentオブジェクトの配列をjsonで返す
 // toFileがTrueの場合jsonファイルとついでにラインの解析結果をプロットしたpngファイルを出力する
 
-package main
+package pdf
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -93,8 +91,8 @@ func removeExtension(filePath string) string {
 	return fileName[:len(fileName)-len(extension)]
 }
 
-// JSON receives an array of paths and return array of content objects as JSON.
-func JSON(filePaths []string, toFile bool) []byte {
+// Parse receives an array of paths and return array of content objects as JSON.
+func Parse(filePaths []string, toFile bool) []byte {
 	sTime := time.Now()
 	docs := make([][]Page, len(filePaths))
 	var wg sync.WaitGroup
@@ -117,21 +115,4 @@ func JSON(filePaths []string, toFile bool) []byte {
 		result = js
 	}
 	return result
-}
-
-func main() {
-	flag.Parse()
-	args := flag.Args()
-	var path []string
-	toFile, err := strconv.ParseBool(args[0])
-	if err != nil {
-		toFile = true
-		path = args
-	} else {
-		path = args[1:]
-	}
-	for i, p := range path {
-		path[i] = filepath.FromSlash(p)
-	}
-	os.Stdout.Write(JSON(path, toFile))
 }

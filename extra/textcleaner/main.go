@@ -7,13 +7,9 @@ import (
 	"os"
 
 	"github.com/rsc.io/pdf"
+	"github.com/rsc.io/pdf/core"
 	"golang.org/x/text/width"
 )
-
-type Page struct {
-	Contents pdf.Content
-	MediaBox pdf.BoundingBox
-}
 
 func cleanPdfText(raw []byte) []byte {
 	var rawJSON []byte
@@ -23,7 +19,7 @@ func cleanPdfText(raw []byte) []byte {
 	default:
 		rawJSON, _ = ioutil.ReadFile(string(raw))
 	}
-	var docs [][]Page
+	var docs [][]pdf.Page
 	json.Unmarshal(rawJSON, &docs)
 	for i, doc := range docs {
 		for j, page := range doc {
@@ -39,8 +35,8 @@ func cleanPdfText(raw []byte) []byte {
 	return js
 }
 
-func cleanTexts(ts []pdf.Text) []pdf.Text {
-	var cleanedTexts []pdf.Text
+func cleanTexts(ts []core.Text) []core.Text {
+	var cleanedTexts []core.Text
 	for _, t := range ts {
 		cleanedTexts = append(cleanedTexts, t)
 		for _, c := range t.Char {
