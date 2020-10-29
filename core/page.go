@@ -586,7 +586,6 @@ func (fi *fontInfo) getGid(s string) []int {
 
 // A FontInfo interface is used in combination with fontInfo.
 type FontInfo interface {
-	setWidth(*Font)
 	createText(s string, g *gstate) *Text
 }
 
@@ -620,11 +619,11 @@ func newType1Font(f *Font) *type1Font {
 	fi.Name = f.BaseFont()
 	fi.Encoder = f.Encoder()
 	fi.Bytes = 1
-	fi.setWidth(f)
+	fi.initWidth(f)
 	return fi
 }
 
-func (tp1 *type1Font) setWidth(f *Font) {
+func (tp1 *type1Font) initWidth(f *Font) {
 	widthsMap := map[int]float64{}
 	first := f.FirstChar()
 	last := f.LastChar()
@@ -642,11 +641,11 @@ func newType0Font(f *Font) *type0Font {
 	fi.Name = f.BaseFont()
 	fi.Encoder = f.Encoder()
 	fi.Bytes = 2
-	fi.setWidth(f)
+	fi.initWidth(f)
 	return fi
 }
 
-func (tp0 *type0Font) setWidth(f *Font) {
+func (tp0 *type0Font) initWidth(f *Font) {
 	widthsMap := map[int]float64{}
 	df := f.V.Key("DescendantFonts").Index(0)
 	widths := df.Key("W")
