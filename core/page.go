@@ -512,8 +512,8 @@ func (bbox *BoundingBox) Points() (Point, Point) {
 	return bbox.Min, bbox.Max
 }
 
-// A fontInfos is Font information that you want to get only once.
-type fontInfos struct {
+// A fontInfo is Font information that you want to get only once.
+type fontInfo struct {
 	Name    string
 	Encoder [2]TextEncoding
 	Width   map[int]float64
@@ -521,8 +521,8 @@ type fontInfos struct {
 	Bytes   int
 }
 
-// CreateText creates a Text object from a string(Tj or TJ argument).
-func (fi *fontInfos) CreateText(s string, g *gstate) *Text {
+// createText creates a Text object from a string(Tj or TJ argument).
+func (fi *fontInfo) createText(s string, g *gstate) *Text {
 	gid := fi.getGid(s)
 	text := Text{}
 	CORR := 1000. // グリフ幅の1はテキスト空間の1/1000のサイズを表すため
@@ -556,7 +556,7 @@ func (fi *fontInfos) CreateText(s string, g *gstate) *Text {
 	return &text
 }
 
-func (fi *fontInfos) getGid(s string) []int {
+func (fi *fontInfo) getGid(s string) []int {
 	// TODO: TextEncoderのDecodeから取得したい
 	chrs := []int{}
 	if fi.Encoder[1] != nil {
@@ -584,25 +584,25 @@ func (fi *fontInfos) getGid(s string) []int {
 	return chrs
 }
 
-// A fontInfo interface is used in combination with fontInfos.
-type fontInfo interface {
+// A FontInfo interface is used in combination with fontInfo.
+type FontInfo interface {
 	setWidth(*Font)
-	getFontInfos() fontInfos
+	createText(s string, g *gstate) *Text
 }
 
 // A type1Font is a ASCII font.
 type type1Font struct {
-	fontInfos
+	fontInfo
 }
 
 // A type0Font is mainly used for Japanese fonts.
 type type0Font struct {
-	fontInfos
+	fontInfo
 }
 
 // newFontInfo is the constructor of FontInfo. Processing branches depending on the value of "Subtype".
-func newFontInfo(f *Font) fontInfo {
-	var fi fontInfo
+func newFontInfo(f *Font) FontInfo {
+	var fi FontInfo
 	switch st := f.V.Key("Subtype").Name(); st {
 	case "TrueType", "Type1":
 		fi = newType1Font(f)
@@ -634,10 +634,6 @@ func (tp1 *type1Font) setWidth(f *Font) {
 	}
 	tp1.Width = widthsMap
 	tp1.DWidth = f.V.Key("FontDescriptor").Key("MissingWidth").Float64() // default = 0
-}
-
-func (tp1 *type1Font) getFontInfos() fontInfos {
-	return tp1.fontInfos
 }
 
 // newType0Font is called by newFontInfo.
@@ -685,10 +681,6 @@ func (tp0 *type0Font) setWidth(f *Font) {
 	} else {
 		tp0.DWidth = 1000
 	}
-}
-
-func (tp0 *type0Font) getFontInfos() fontInfos {
-	return tp0.fontInfos
 }
 
 // A Line represents a line
@@ -813,12 +805,11 @@ func (p *Page) Contents() Content {
 
 func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 	result := Content{}
-	fontInfos := map[string]fontInfo{}
+	fonts := map[string]FontInfo{}
 
 	mbox := *newBoundingBox(parent)
 	showText := func(s string) {
-		fi := fontInfos[g.Tf].getFontInfos()
-		text := fi.CreateText(s, &g)
+		text := fonts[g.Tf].createText(s, &g)
 		if !text.IsEmpty() && mbox.Contains(text.Points()) {
 			result.Text = append(result.Text, text)
 		}
@@ -1041,8 +1032,8 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					panic("bad Tf")
 				}
 				g.Tf = args[0].Name()
-				if _, ok := fontInfos[g.Tf]; !ok {
-					fontInfos[g.Tf] = newFontInfo(&Font{parent.Key("Resources").Key("Font").Key(g.Tf)})
+				if _, ok := fonts[g.Tf]; !ok {
+					fonts[g.Tf] = newFontInfo(&Font{parent.Key("Resources").Key("Font").Key(g.Tf)})
 				}
 				g.Tfs = args[1].Float64()
 
@@ -1075,7 +1066,6 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					if x.Kind() == String {
 						showText(x.RawString())
 					} else {
-						fi := fontInfos[g.Tf].getFontInfos()
 						tx := -x.Float64() / 1000 * g.Tfs * g.Th
 						g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
 					}
