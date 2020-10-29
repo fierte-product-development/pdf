@@ -1076,7 +1076,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 						showText(x.RawString())
 					} else {
 						fi := fontInfos[g.Tf].getFontInfos()
-						tx := -x.Float64() / fi.DWidth * g.Tfs * g.Th
+						tx := -x.Float64() / 1000 * g.Tfs * g.Th
 						g.Tm = matrix{{1, 0, 0}, {0, 1, 0}, {tx, 0, 1}}.mul(g.Tm)
 					}
 				}
