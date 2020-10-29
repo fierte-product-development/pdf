@@ -785,8 +785,8 @@ func (ps *points) fill() *Polygon {
 	return pg
 }
 
-// Contents returns the page's content.
-func (p *Page) Contents() Content {
+// Content returns the page's content.
+func (p *Page) Content() Content {
 	val := p.V.Key("Contents")
 	vals := []Value{}
 	switch val.Kind() {
