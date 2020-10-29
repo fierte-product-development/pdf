@@ -697,13 +697,13 @@ type Line struct {
 	Max Point
 }
 
-// y座標が優先、上から下、左から右
+// 横書き(縦長)pdfを前提とするためy座標が優先、下から上、左から右
 func newLine(p1 Point, p2 Point) *Line {
 	l := new(Line)
-	if p1.Y > p2.Y {
+	if p1.Y < p2.Y {
 		l.Min = p1
 		l.Max = p2
-	} else if p1.Y < p2.Y {
+	} else if p1.Y > p2.Y {
 		l.Min = p2
 		l.Max = p1
 	} else if p1.X < p2.X {
@@ -718,15 +718,22 @@ func newLine(p1 Point, p2 Point) *Line {
 	return l
 }
 
+// Polygon is a connected series of lines that form a closed shape.
+type Polygon struct {
+	Line []*Line
+}
+
 // Content describes the basic content on a page: the text and any drawn lines.
 type Content struct {
-	Text []*Text
-	Line []*Line
+	Text    []*Text
+	Line    []*Line
+	Polygon []*Polygon
 }
 
 func (c *Content) append(cont *Content) {
 	c.Text = append(c.Text, cont.Text...)
 	c.Line = append(c.Line, cont.Line...)
+	c.Polygon = append(c.Polygon, cont.Polygon...)
 }
 
 type gstate struct {
@@ -755,15 +762,15 @@ func newgstate() *gstate {
 	return gs
 }
 
-type pointstack struct {
+type points struct {
 	p []Point
 }
 
-func (ps *pointstack) append(p ...Point) {
+func (ps *points) append(p ...Point) {
 	ps.p = append(ps.p, p...)
 }
 
-func (ps *pointstack) closePath() {
+func (ps *points) closePath() {
 	l := len(ps.p)
 	if l == 0 {
 		panic("point stack is empty")
@@ -773,7 +780,7 @@ func (ps *pointstack) closePath() {
 	}
 }
 
-func (ps *pointstack) stroke() []*Line {
+func (ps *points) stroke() []*Line {
 	var ls []*Line
 	for i := 0; i < len(ps.p)-1; i++ {
 		ls = append(ls, newLine(ps.p[i], ps.p[i+1]))
@@ -781,11 +788,10 @@ func (ps *pointstack) stroke() []*Line {
 	return ls
 }
 
-// 塗りつぶしではなく枠線を描画する。実質的に線である場合は中心線を描画
-func (ps *pointstack) fill() []*Line {
-	var ls []*Line
-	ls = append(ls, ps.stroke()...)
-	return ls
+func (ps *points) fill() *Polygon {
+	pg := new(Polygon)
+	pg.Line = append(pg.Line, ps.stroke()...)
+	return pg
 }
 
 // Contents returns the page's content.
@@ -818,18 +824,18 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 		}
 	}
 
-	var pstack pointstack
+	var ps points
 	closePath := func() {
-		pstack.closePath()
+		ps.closePath()
 	}
 	stroke := func() {
-		if g.CS && mbox.Contains(pstack.p...) {
-			result.Line = append(result.Line, pstack.stroke()...)
+		if g.CS && mbox.Contains(ps.p...) {
+			result.Line = append(result.Line, ps.stroke()...)
 		}
 	}
 	fill := func() {
-		if g.cs && mbox.Contains(pstack.p...) {
-			result.Line = append(result.Line, pstack.fill()...)
+		if g.cs && mbox.Contains(ps.p...) {
+			result.Polygon = append(result.Polygon, ps.fill())
 		}
 	}
 
@@ -869,7 +875,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					panic("bad l or m")
 				}
 				//printStream(strm)
-				pstack.append(Point{
+				ps.append(Point{
 					g.CTM[2][0] + args[0].Float64()*g.CTM[0][0],
 					g.CTM[2][1] + args[1].Float64()*g.CTM[1][1],
 				})
@@ -878,7 +884,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 6 {
 					panic("bad c")
 				}
-				pstack.append(Point{
+				ps.append(Point{
 					g.CTM[2][0] + args[4].Float64()*g.CTM[0][0],
 					g.CTM[2][1] + args[5].Float64()*g.CTM[1][1],
 				})
@@ -886,7 +892,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				if len(args) != 4 {
 					panic("bad v or y")
 				}
-				pstack.append(Point{
+				ps.append(Point{
 					g.CTM[2][0] + args[2].Float64()*g.CTM[0][0],
 					g.CTM[2][1] + args[3].Float64()*g.CTM[1][1],
 				})
@@ -905,7 +911,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 				case "b", "b*", "B", "B*", "S", "s":
 					stroke()
 				}
-				pstack = pointstack{}
+				ps = points{}
 
 			case "re": // 四角形のパス
 				if len(args) != 4 {
@@ -922,7 +928,7 @@ func getContentFromStream(parent *Value, streams []Value, g gstate) Content {
 					Point{x, y},
 					Point{x, y + h},
 				}
-				pstack.append(points...)
+				ps.append(points...)
 
 			case "gs": // 透明度などのステートが入った辞書をページオブジェクトから取得する
 				gs := parent.Key("Resources").Key("ExtGState").Key(args[0].Name())
