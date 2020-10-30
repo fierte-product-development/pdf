@@ -52,11 +52,12 @@ func newDict() Value {
 //
 // There is no support for executable blocks, among other limitations.
 //
-func Interpret(rd io.ReadCloser, stk *Stack, do func(stk *Stack, op string)) {
+func Interpret(rd io.ReadCloser, do func(stk *Stack, op string)) {
 	b := newBuffer(rd, 0)
 	b.allowEOF = true
 	b.allowObjptr = false
 	b.allowStream = false
+	var stk Stack
 	var dicts []dict
 	var dup bool
 	var dups []*dict
@@ -77,7 +78,7 @@ Reading:
 						continue Reading
 					}
 				}
-				do(stk, string(kw))
+				do(&stk, string(kw))
 				continue
 			case "dict":
 				stk.Pop()
